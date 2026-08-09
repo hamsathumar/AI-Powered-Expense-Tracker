@@ -39,6 +39,42 @@ export async function listPeople(): Promise<Person[]> {
   return rows.map(fromRow);
 }
 
+export async function getPerson(id: string): Promise<Person | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<PersonRow>('SELECT * FROM people WHERE id = ?', id);
+  return row ? fromRow(row) : null;
+}
+
+export async function renamePerson(id: string, name: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE people SET name = ?, unresolved = 0 WHERE id = ?', name, id);
+}
+
+export interface PersonWithNet {
+  person: Person;
+  netMinor: number;
+}
+
+/** Everyone with their §4.3 net balance in one query (no N+1). */
+export async function listPeopleWithNetBalances(): Promise<PersonWithNet[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<PersonRow & { net: number }>(
+    `SELECT p.*, COALESCE(SUM(
+       CASE t.direction
+         WHEN 'lend'                    THEN  t.amount
+         WHEN 'lend_repayment_received' THEN -t.amount
+         WHEN 'borrow'                  THEN -t.amount
+         WHEN 'borrow_repayment_made'   THEN  t.amount
+       END), 0) AS net
+     FROM people p
+     LEFT JOIN transactions t
+       ON t.person_id = p.id AND t.type = 'lending' AND t.status = 'approved'
+     GROUP BY p.id
+     ORDER BY p.name`,
+  );
+  return rows.map((row) => ({ person: fromRow(row), netMinor: row.net }));
+}
+
 /**
  * Person net balance (technical-plan.md §4.3).
  * Positive = they owe the user; negative = the user owes them.
