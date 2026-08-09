@@ -160,6 +160,20 @@ const migrations: Migration[] = [
       await seedDefaultCategories(db);
     },
   },
+  {
+    // One-time cleanup of the Stage 2 dev-db verification rows (Test Cash /
+    // Test Kamal and their transactions) from devices that ran the scenario.
+    version: 2,
+    up: async (db) => {
+      await db.execAsync(`
+        DELETE FROM transactions
+          WHERE account_id IN (SELECT id FROM accounts WHERE name = 'Test Cash')
+             OR person_id  IN (SELECT id FROM people   WHERE name = 'Test Kamal');
+        DELETE FROM people   WHERE name = 'Test Kamal';
+        DELETE FROM accounts WHERE name = 'Test Cash';
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

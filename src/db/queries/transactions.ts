@@ -155,6 +155,57 @@ export async function getTransaction(id: string): Promise<Transaction | null> {
   return row ? fromRow(row) : null;
 }
 
+/** A transaction plus the display names its list row needs (one query, no N+1). */
+export interface TransactionListItem {
+  tx: Transaction;
+  accountName: string | null;
+  toAccountName: string | null;
+  categoryName: string | null;
+  categoryIcon: string | null;
+  categoryColor: string | null;
+  personName: string | null;
+}
+
+type JoinedRow = TransactionRow & {
+  account_name: string | null;
+  to_account_name: string | null;
+  category_name: string | null;
+  category_icon: string | null;
+  category_color: string | null;
+  person_name: string | null;
+};
+
+export async function listRecentTransactionItems(limit = 50): Promise<TransactionListItem[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<JoinedRow>(
+    `SELECT t.*,
+            a.name  AS account_name,
+            ta.name AS to_account_name,
+            c.name  AS category_name,
+            c.icon  AS category_icon,
+            c.color AS category_color,
+            p.name  AS person_name
+     FROM transactions t
+     LEFT JOIN accounts   a  ON a.id  = t.account_id
+     LEFT JOIN accounts   ta ON ta.id = t.to_account_id
+     LEFT JOIN categories c  ON c.id  = t.category_id
+     LEFT JOIN people     p  ON p.id  = t.person_id
+     WHERE t.status != 'rejected'
+     ORDER BY t.occurred_at DESC
+     LIMIT ?`,
+    limit,
+  );
+  return rows.map((row) => ({
+    tx: fromRow(row),
+    accountName: row.account_name,
+    toAccountName: row.to_account_name,
+    categoryName: row.category_name,
+    categoryIcon: row.category_icon,
+    categoryColor: row.category_color,
+    personName: row.person_name,
+  }));
+}
+
 export async function listRecentTransactions(limit = 50): Promise<Transaction[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<TransactionRow>(

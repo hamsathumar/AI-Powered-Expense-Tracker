@@ -275,6 +275,14 @@ expression of who owes whom.
 Warm, brief, actionable. "No transactions yet — tap the mic to add your first."
 Never a bare "No data."
 
+### 5.9 Date & Time Field (added 2026-08-09)
+Use the **native iOS picker** (`@react-native-community/datetimepicker`,
+mode `datetime`, display `compact`) — the system pill that expands into the
+calendar/time wheels. `themeVariant` follows the app theme; `accentColor` is
+the primary brown. A native control is deliberately preferred over a custom
+one here: system-familiar, accessible, and matches the calm/unobtrusive
+positioning. Do not build a custom calendar.
+
 ---
 
 ## 6. Navigation
