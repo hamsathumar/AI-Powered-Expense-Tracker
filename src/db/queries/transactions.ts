@@ -104,6 +104,32 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type NewTransaction = DistributiveOmit<Transaction, 'id' | 'createdAt' | 'updatedAt'>;
 
 export async function insertTransaction(input: NewTransaction): Promise<Transaction> {
+  const db = await getDb();
+  return insertWithDb(db, input);
+}
+
+/**
+ * Inserts several transactions in ONE database transaction — all or none.
+ * Used by the bill splitter so a half-written split can never exist.
+ * (Approval afterwards is still per-row — decision P7.)
+ */
+export async function insertTransactionsAtomically(
+  inputs: NewTransaction[],
+): Promise<Transaction[]> {
+  const db = await getDb();
+  const results: Transaction[] = [];
+  await db.withTransactionAsync(async () => {
+    for (const input of inputs) {
+      results.push(await insertWithDb(db, input));
+    }
+  });
+  return results;
+}
+
+async function insertWithDb(
+  db: Awaited<ReturnType<typeof getDb>>,
+  input: NewTransaction,
+): Promise<Transaction> {
   if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
     throw new Error(`amountMinor must be a positive integer, got ${input.amountMinor}`);
   }
@@ -111,7 +137,6 @@ export async function insertTransaction(input: NewTransaction): Promise<Transact
     throw new Error('Transfer must use two distinct accounts');
   }
 
-  const db = await getDb();
   const id = Crypto.randomUUID();
   const now = new Date().toISOString();
 

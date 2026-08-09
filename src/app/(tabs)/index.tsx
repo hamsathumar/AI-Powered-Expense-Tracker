@@ -75,6 +75,9 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <Text style={[type.h1, { color: colors.text }]}>Kaasu</Text>
         <View style={styles.headerActions}>
+          <Link href="/bill-split" accessibilityRole="button" style={styles.iconLink}>
+            <Feather name="divide-circle" size={20} color={colors.textMuted} />
+          </Link>
           <Link href="/person" accessibilityRole="button" style={styles.iconLink}>
             <Feather name="users" size={20} color={colors.textMuted} />
           </Link>

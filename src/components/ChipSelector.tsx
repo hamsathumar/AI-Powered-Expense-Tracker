@@ -20,14 +20,25 @@ export interface ChipItem {
 interface Props {
   label: string;
   items: ChipItem[];
-  selectedId: string | null;
+  selectedId?: string | null;
+  /** Multi-select mode: pass the selected set instead of selectedId. */
+  selectedIds?: string[];
   onSelect: (id: string) => void;
   onAddNew?: () => void;
   emptyHint?: string;
 }
 
-export function ChipSelector({ label, items, selectedId, onSelect, onAddNew, emptyHint }: Props) {
+export function ChipSelector({
+  label,
+  items,
+  selectedId,
+  selectedIds,
+  onSelect,
+  onAddNew,
+  emptyHint,
+}: Props) {
   const { colors } = useTheme();
+  const isSelected = (id: string) => (selectedIds ? selectedIds.includes(id) : id === selectedId);
 
   return (
     <View style={styles.container}>
@@ -37,7 +48,7 @@ export function ChipSelector({ label, items, selectedId, onSelect, onAddNew, emp
       ) : null}
       <View style={styles.row}>
         {items.map((item) => {
-          const selected = item.id === selectedId;
+          const selected = isSelected(item.id);
           return (
             <Pressable
               key={item.id}
