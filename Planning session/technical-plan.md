@@ -1,4 +1,4 @@
-# Technical Plan — AI-Powered Expense Tracker
+# Technical Plan — Kaasu
 
 **Companion documents:** `expense-tracker-spec.md` (what the app does),
 `design-system.md` (how it looks).
@@ -20,18 +20,18 @@ web only). Development machine: MacBook Air M3 with Xcode. Test device: iPhone
 | Local DB | **expo-sqlite** | Relational data with real joins/aggregates; the reports are SQL-shaped work |
 | Navigation | **expo-router** | File-based routing, similar mental model to Next.js |
 | State | **React Context + hooks** (+ TanStack Query optional) | App is single-user and local; Redux is unnecessary overhead here |
-| Audio capture | **expo-av** | Records audio for the voice layer |
+| Audio capture | **expo-audio** | Records audio for the voice layer. (`expo-av` was deprecated and removed from the SDK — it does not exist in SDK 57; never use it) |
 | Secure storage | **expo-secure-store** | Stores the Gemini API key outside plain source |
-| Charts | **react-native-gifted-charts** or **victory-native** | Reports screen |
+| Charts | **react-native-gifted-charts** or **victory-native** | Reports screen — verify compatibility with the project's RN version at stage 5 before committing to one |
 | Icons | **@expo/vector-icons** | Bundled with Expo; no separate setup |
 | Dates | **date-fns** | Lighter than moment; needed for recurring schedules |
 | Styling | **StyleSheet + theme context** | Keeps light/dark theming simple and dependency-free |
 
 ### Why Expo over bare React Native
 Expo Go lets the app run on the physical iPhone by scanning a QR code — no
-Xcode signing ritual for day-to-day work. Note: **`expo-sqlite` and `expo-av`
-work in Expo Go**, so the entire MVP can be developed without a custom native
-build. If a native module later requires it, migrate to an Expo *development
+Xcode signing ritual for day-to-day work. Note: **`expo-sqlite`,
+`expo-secure-store`, and `expo-audio` work in Expo Go**, so the entire MVP can
+be developed without a custom native build. If a native module later requires it, migrate to an Expo *development
 build* (still Expo tooling, no ejecting).
 
 ### Why TypeScript is non-negotiable here
@@ -44,26 +44,30 @@ illegal states unrepresentable and will prevent an entire class of bugs.
 
 ## 2. Project Structure
 
+The scaffolded project keeps the router directory at `src/app/` (natively
+supported by expo-router) rather than a root-level `app/` — follow the
+scaffold.
+
 ```
-expense-tracker/
-├── app/                          # expo-router screens
-│   ├── (tabs)/
-│   │   ├── index.tsx             # Home / Dashboard
-│   │   ├── accounts.tsx
-│   │   ├── reports.tsx
-│   │   └── queue.tsx             # Approval Queue
-│   ├── transaction/
-│   │   ├── new.tsx               # Manual entry form
-│   │   └── [id].tsx              # Edit existing
-│   ├── person/
-│   │   ├── index.tsx             # People list
-│   │   └── [id].tsx              # Person detail + settle up
-│   ├── bill-split.tsx
-│   ├── recurring.tsx
-│   ├── categories.tsx
-│   ├── voice.tsx                 # Voice capture
-│   └── onboarding.tsx
+expense-tracker/                  # app display name: Kaasu
 ├── src/
+│   ├── app/                      # expo-router screens
+│   │   ├── (tabs)/
+│   │   │   ├── index.tsx         # Home / Dashboard
+│   │   │   ├── accounts.tsx
+│   │   │   ├── reports.tsx
+│   │   │   └── queue.tsx         # Approval Queue
+│   │   ├── transaction/
+│   │   │   ├── new.tsx           # Manual entry form
+│   │   │   └── [id].tsx          # Edit existing
+│   │   ├── person/
+│   │   │   ├── index.tsx         # People list
+│   │   │   └── [id].tsx          # Person detail + settle up
+│   │   ├── bill-split.tsx
+│   │   ├── recurring.tsx
+│   │   ├── categories.tsx
+│   │   ├── voice.tsx             # Voice capture
+│   │   └── onboarding.tsx
 │   ├── db/
 │   │   ├── schema.sql            # Table definitions
 │   │   ├── migrations.ts         # Versioned migration runner
@@ -87,9 +91,10 @@ expense-tracker/
 │   │   ├── tokens.ts             # Colors, spacing, radii, typography
 │   │   └── ThemeContext.tsx      # Light/dark toggle
 │   └── components/               # Reusable UI
-├── design-system.md
-├── expense-tracker-spec.md
-└── technical-plan.md
+└── Planning session/
+    ├── design-system.md
+    ├── expense-tracker-spec.md
+    └── technical-plan.md
 ```
 
 ---
@@ -130,6 +135,25 @@ CREATE TABLE people (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE recurring_templates (
+  id            TEXT PRIMARY KEY,
+  type          TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  amount        INTEGER NOT NULL,
+  account_id    TEXT REFERENCES accounts(id),
+  to_account_id TEXT REFERENCES accounts(id),
+  category_id   TEXT REFERENCES categories(id),
+  person_id     TEXT REFERENCES people(id),
+  direction     TEXT,
+  frequency     TEXT NOT NULL CHECK (frequency IN ('daily','weekly','monthly','custom')),
+  interval_days INTEGER,                   -- for 'custom'
+  next_due_date TEXT NOT NULL,
+  end_date      TEXT,
+  active        INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL
+);
+
+-- created after recurring_templates so its foreign key target already exists
 CREATE TABLE transactions (
   id              TEXT PRIMARY KEY,
   type            TEXT NOT NULL CHECK (type IN ('expense','income','transfer','lending')),
@@ -159,24 +183,9 @@ CREATE INDEX idx_tx_account    ON transactions(account_id);
 CREATE INDEX idx_tx_person     ON transactions(person_id);
 CREATE INDEX idx_tx_category   ON transactions(category_id);
 
-CREATE TABLE recurring_templates (
-  id            TEXT PRIMARY KEY,
-  type          TEXT NOT NULL,
-  name          TEXT NOT NULL,
-  amount        INTEGER NOT NULL,
-  account_id    TEXT REFERENCES accounts(id),
-  to_account_id TEXT REFERENCES accounts(id),
-  category_id   TEXT REFERENCES categories(id),
-  person_id     TEXT REFERENCES people(id),
-  direction     TEXT,
-  frequency     TEXT NOT NULL CHECK (frequency IN ('daily','weekly','monthly','custom')),
-  interval_days INTEGER,                   -- for 'custom'
-  next_due_date TEXT NOT NULL,
-  end_date      TEXT,
-  active        INTEGER NOT NULL DEFAULT 1,
-  created_at    TEXT NOT NULL
-);
-
+-- key/value settings, e.g. default_currency, theme_override.
+-- v1 is single-currency: default_currency lives here, and transactions
+-- deliberately carry NO currency column.
 CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -223,12 +232,18 @@ net = + Σ(lend)                     -- user gave them money
       − Σ(borrow)                   -- they gave the user money
       + Σ(borrow_repayment_made)    -- user paid them back
 ```
-Only `approved` rows count.
+Only `approved` rows count. Settle Up prefills from this approved-only
+balance; if the person has pending lending rows, the UI shows a hint that
+they're not included (see spec §3.5).
 
 ### 4.4 Bill split generator
 Pure function: `(total, category, participants, splitMethod, payer) → Transaction[]`.
 All generated rows share one `bill_split_id` and enter as `status = 'pending'`.
-See functional spec §4 for the two cases. **Validate that the sum of generated
+See functional spec §4 for the two cases. Case B (someone else paid) generates
+a **borrow + expense pair** for the user's share — net-zero on the account,
+spending recorded on the bill's date. Generated rows are approved/rejected
+**independently** in the queue (no atomic group approval in v1).
+**Validate that the sum of generated
 amounts exactly equals the total** — rounding remainders must be assigned
 deliberately (e.g. give the remainder cent(s) to the payer) rather than silently
 lost.
@@ -246,7 +261,7 @@ multiple times in a day (check for an existing transaction with the same
 
 ### 5.1 Flow
 ```
-Audio (expo-av) → Gemini API (audio + context prompt) → strict JSON
+Audio (expo-audio) → Gemini API (audio + context prompt) → strict JSON
   → validate.ts (app-side, NOT the LLM) → insert as status='pending'
 ```
 Gemini accepts audio natively, so no separate speech-to-text service is needed.
@@ -268,7 +283,10 @@ prompt wording alone.
 The LLM's output is **untrusted input**. `validate.ts` must:
 - Confirm JSON parses; strip stray markdown fences defensively
 - Confirm `type` is one of the four valid values
-- Confirm `amount` is a positive finite number; convert to minor units
+- Confirm `amount` is a positive finite number (major units from the model);
+  convert to integer minor units before insert
+- Sanity-check the model's `currency` against the app's default — a mismatch
+  gets a confidence flag, never a silent conversion
 - Resolve `category`/`account`/`person` names to real IDs — **never insert an
   unmatched name as if it were valid**
 - Enforce type rules (no category on transfer/lending; person required on
@@ -278,8 +296,9 @@ The LLM's output is **untrusted input**. `validate.ts` must:
 ### 5.5 Never block on uncertainty
 The model fills what it can and flags the rest. Unresolved names are kept
 verbatim with an `unrecognized_name` flag; the user fixes it in the queue.
-Flags: `unrecognized_name`, `no_account_matched`, `low_confidence_amount`,
-`no_category_matched`, `new_person`.
+Flags (canonical list, matches spec §6): `unrecognized_name`,
+`no_account_matched`, `low_confidence_amount`, `no_category_matched`.
+There is no separate `new_person` flag — `unrecognized_name` covers it.
 
 ### 5.6 API key handling — read this
 An API key shipped inside a mobile app **can be extracted** — this is true of

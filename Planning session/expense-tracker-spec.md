@@ -1,4 +1,4 @@
-# AI-Powered Expense Tracker — Functional Specification
+# Kaasu — Functional Specification
 
 **Purpose of this document:** a complete functional and data spec for a personal
 (single-user, not published to app stores) expense tracking app with voice-driven
@@ -6,7 +6,7 @@ entry powered by an LLM. Written to be handed to an AI coding assistant to scaff
 and implement. Design inspired by the Paisa expense tracker app (UI/UX patterns
 only — no code or assets reused from Paisa).
 
-**Platform:** Mobile app (React Native or Flutter — undecided).
+**Platform:** Mobile app — React Native via Expo (decided; see `technical-plan.md`).
 **Backend:** Local-first (on-device SQLite or similar). No multi-user, no server
 sync required for v1.
 **AI layer:** Google Gemini API (via Google AI Studio) for voice/text transcript
@@ -90,7 +90,7 @@ and Lending affects Person balances.
 | owner_label | string | optional, e.g. account holder name |
 | currency | string | set at onboarding, one default currency for v1 |
 | icon / color | string | for UI |
-| balance | computed | sum of approved transactions affecting this account |
+| balance | computed | opening_balance + sum of approved transactions affecting this account |
 
 ### 3.2 Category
 | Field | Type | Notes |
@@ -122,10 +122,9 @@ them, and a **"Settle up"** action (see §3.5).
 |---|---|---|
 | id | uuid | |
 | type | enum | Expense, Income, Transfer, Lending |
-| status | enum | `pending`, `approved`, `edited`, `rejected` |
+| status | enum | `pending`, `approved`, `rejected` — editing a pending item keeps it `pending` until approved; there is no separate `edited` state |
 | name | string | short title, e.g. "Boarding Rent" |
-| amount | decimal | |
-| currency | string | |
+| amount | integer | **minor units (cents), always positive** — direction of money flow derives from `type`/`direction`, never a sign |
 | description | string | optional |
 | date, time | datetime | |
 | account_id | uuid | required for Expense/Income/Lending; both from+to for Transfer |
@@ -139,10 +138,19 @@ them, and a **"Settle up"** action (see §3.5).
 | linked_bill_split_id | uuid | optional, see §4 |
 | linked_recurring_id | uuid | optional, see §5 |
 
+**Currency:** v1 is single-currency. The default currency lives in `settings`,
+not on each transaction row. (The voice/LLM contract still returns a `currency`
+field, which validation sanity-checks against the default — see §6.)
+
 ### 3.5 Settle Up (person-level action, not a separate entity)
 Pre-fills a Lending transaction (repayment direction) between the user and a
 selected person, defaulting to their current outstanding balance but editable
 for partial settlement.
+
+The prefilled amount is computed from **approved** transactions only. If the
+person has pending lending transactions not reflected in that number, show a
+hint (e.g. "2 pending items not included") so the prefill is never silently
+misleading.
 
 ---
 
@@ -173,20 +181,36 @@ Example: Rs1500 lunch, split 3 ways equally, user paid.
 Total money that left the account = Rs1500, but only Rs500 counts as the
 user's spending.
 
-### Logic — Case B: Someone else is the payer
-No money leaves the user's account at the time of the bill. It generates:
-1. **One Lending transaction** (direction = `borrow`) for the user's own
-   share, owed to that person. This is a liability, not yet spending.
-2. When the user later pays that person back, use **Settle Up** (§3.5),
-   creating a `borrow_repayment_made` Lending transaction — money leaves the
-   user's account at that point.
+### Logic — Case B: Someone else is the payer (DECIDED)
+No money leaves the user's account at the time of the bill, but the user's
+share IS real spending and must appear in reports on the bill's date. It
+generates a **pair** of transactions for the user's share:
+1. **One Lending transaction** (direction = `borrow`) — money "in" from the
+   payer, owed back to them. Affects the person balance (user owes payer).
+2. **One Expense transaction** for the same amount, categorized normally
+   (e.g. Food) — this records the real spending.
 
-**Open design question (confirm with user before implementing):** should the
-user's share become an Expense at the moment the bill is split (Case B), or
-only at the moment of settlement? The spec above defaults to "only at
-settlement," to keep the golden rule (Lending never affects spending reports)
-consistent. Flag this to the user for confirmation before finalizing — this
-was inferred by symmetry with Case A, not explicitly stated.
+Net effect on the user's account balance is **zero** (borrow in + expense
+out), which is correct: no money actually moved. The person balance shows the
+debt, and spending reports show the expense with the correct date and
+category.
+
+When the user later pays the person back, use **Settle Up** (§3.5), creating a
+`borrow_repayment_made` Lending transaction — money leaves the user's account
+at that point, and it does NOT count as spending (the spending was already
+recorded at split time).
+
+**Decision history (2026-08-09):** an earlier draft generated only the lone
+`borrow`, deferring the expense "to settlement" — but settlement creates a
+Lending transaction, which the golden rule excludes from reports, so
+friend-paid bills would never have appeared in spending reports at all. The
+borrow + expense pair fixes this. This is final, not an open question.
+
+### Approval behavior for generated transactions
+All transactions from one split share a `bill_split_id` but are approved,
+edited, or rejected **independently** in the Approval Queue — no atomic
+group approval in v1. If partial approval proves confusing in practice,
+revisit and make the group atomic.
 
 ---
 
@@ -236,6 +260,9 @@ so the user resolves it later in the Approval Queue:
 - `low_confidence_amount` — amount transcription/parse uncertain.
 - `no_category_matched` — couldn't confidently map to an existing category.
 
+This is the **canonical, complete flag list** (there is no separate
+`new_person` flag — `unrecognized_name` covers that case).
+
 Queue items with flags should be visually marked (e.g. a warning icon) so the
 user can bulk-approve clean items and focus attention on flagged ones.
 
@@ -264,6 +291,11 @@ user can bulk-approve clean items and focus attention on flagged ones.
   "confidence_flags": ["unrecognized_name"]
 }
 ```
+
+**Contract notes:** the model returns `amount` in major units as spoken
+("two hundred rupees" → `200`); the validation layer converts to integer
+minor units before insert. The `currency` field is sanity-checked against the
+app's single default currency — a mismatch gets a flag, never a conversion.
 
 ---
 

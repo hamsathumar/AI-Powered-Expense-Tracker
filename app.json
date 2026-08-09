@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "expense-tracker",
-    "slug": "expense-tracker",
+    "name": "Kaasu",
+    "slug": "kaasu",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "expensetracker",
+    "scheme": "kaasu",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"

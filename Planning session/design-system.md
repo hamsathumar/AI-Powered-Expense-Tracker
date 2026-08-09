@@ -1,4 +1,4 @@
-# Design System & Brand Identity — AI-Powered Expense Tracker
+# Design System & Brand Identity — Kaasu
 
 **Companion documents:** `expense-tracker-spec.md` (what it does),
 `technical-plan.md` (how it's built).
@@ -32,16 +32,11 @@ This positioning drives every design decision below.
 | **Warm** | Feels like a personal notebook, not an accounting terminal. |
 | **Unobtrusive** | Gets out of the way. The app is a means, not a destination. |
 
-### 1.3 Naming (open — pick one or supply your own)
-The app name has not been chosen yet. Options that fit the positioning:
-
-| Name | Rationale |
-|---|---|
-| **Kaasu** | "Money" in Tamil/Malayalam — short, local, memorable |
-| **Ledgr** | Plain, tool-like, understated |
-| **Tally** | Simple English verb; matches the "just record it" feel |
-| **Murmur** | Nods to the voice-first interaction; calm and quiet |
-| **Sen** | Minimal, currency-adjacent, easy to say |
+### 1.3 Name: Kaasu (DECIDED 2026-08-09)
+**Kaasu** — "money" in Tamil/Malayalam. Short, local, personal, memorable —
+fits the private-notebook positioning exactly. Treat "Kaasu" as the canonical
+name throughout the codebase, docs, and `app.json`. (A future rename is
+acceptable if the user asks, but this is no longer an open question.)
 
 **Voice & tone:** plain, short, never chirpy. "3 to review" not "You've got 3
 exciting transactions waiting!" Never guilt the user: "Rs4,200 on Food this
