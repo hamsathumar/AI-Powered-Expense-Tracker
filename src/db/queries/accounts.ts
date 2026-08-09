@@ -67,6 +67,32 @@ export async function createAccount(input: NewAccount): Promise<Account> {
   };
 }
 
+export async function getAccount(id: string): Promise<Account | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<AccountRow>('SELECT * FROM accounts WHERE id = ?', id);
+  return row ? fromRow(row) : null;
+}
+
+export async function updateAccount(
+  id: string,
+  changes: Pick<NewAccount, 'name' | 'type' | 'openingBalanceMinor'>,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE accounts SET name = ?, type = ?, opening_balance = ? WHERE id = ?',
+    changes.name,
+    changes.type,
+    changes.openingBalanceMinor ?? 0,
+    id,
+  );
+}
+
+/** Soft delete — history stays intact; archived accounts leave all lists. */
+export async function archiveAccount(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE accounts SET archived = 1 WHERE id = ?', id);
+}
+
 export async function listAccounts(): Promise<Account[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<AccountRow>(

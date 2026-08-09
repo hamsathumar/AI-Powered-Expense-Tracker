@@ -25,7 +25,9 @@ interface Props {
 export function Amount({ valueMinor, txType, textStyle = typeScale.amount }: Props) {
   const { colors } = useTheme();
 
-  const sign = txType === 'expense' ? '−' : txType === 'income' ? '+' : '';
+  // Typed amounts are always-positive by convention; neutral values (e.g.
+  // account balances) may be genuinely negative and must show it.
+  const sign = txType === 'expense' ? '−' : txType === 'income' ? '+' : valueMinor < 0 ? '−' : '';
   const color = txType ? colors[txType] : colors.text;
 
   return (

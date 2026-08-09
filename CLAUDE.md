@@ -77,5 +77,9 @@ or category breakdowns.
   union), typed queries with §4.2/§4.3 balance math in SQL; verified on-device
   via the TEMPORARY `src/app/dev-db.tsx` screen (remove in Stage 3, along
   with the Test Cash/Test Kamal rows it created).
-- Next: Stage 3 — manual transaction form + list (all four types,
-  type-conditional fields).
+- Stage 3 ✅ (2026-08-09): money format/parse (`src/domain/money.ts`), Amount /
+  TypeSelector / ChipSelector / AmountInput / TransactionRow components,
+  type-conditional form (`transaction/new.tsx`, saves as pending), recent list
+  on Home, native iOS date-time picker (design-system §5.9), migration 2
+  removed Stage-2 test rows; all four types verified on-device.
+- Next: Stage 4 — Accounts + Categories management screens.

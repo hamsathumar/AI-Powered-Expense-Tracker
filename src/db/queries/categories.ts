@@ -42,6 +42,32 @@ export interface NewCategory {
   color?: string;
 }
 
+export async function getCategory(id: string): Promise<Category | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<CategoryRow>('SELECT * FROM categories WHERE id = ?', id);
+  return row ? fromRow(row) : null;
+}
+
+export async function updateCategory(
+  id: string,
+  changes: Pick<NewCategory, 'name' | 'icon' | 'color'>,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE categories SET name = ?, icon = ?, color = ? WHERE id = ?',
+    changes.name,
+    changes.icon ?? null,
+    changes.color ?? null,
+    id,
+  );
+}
+
+/** Soft delete — existing transactions keep their category reference. */
+export async function archiveCategory(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE categories SET archived = 1 WHERE id = ?', id);
+}
+
 export async function createCategory(input: NewCategory): Promise<Category> {
   const db = await getDb();
   const id = Crypto.randomUUID();

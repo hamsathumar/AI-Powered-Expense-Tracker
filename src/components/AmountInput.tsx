@@ -12,15 +12,18 @@ import { radius, space, type } from '@/theme/tokens';
 interface Props {
   value: string;
   onChange: (text: string) => void;
+  label?: string;
+  /** Zero is valid for some fields (e.g. opening balance). */
+  allowZero?: boolean;
 }
 
-export function AmountInput({ value, onChange }: Props) {
+export function AmountInput({ value, onChange, label = 'Amount', allowZero = false }: Props) {
   const { colors } = useTheme();
-  const invalid = value.length > 0 && parseAmountInput(value) === null;
+  const invalid = value.length > 0 && parseAmountInput(value, { allowZero }) === null;
 
   return (
     <View style={styles.container}>
-      <Text style={[type.label, { color: colors.textMuted }]}>Amount</Text>
+      <Text style={[type.label, { color: colors.textMuted }]}>{label}</Text>
       <View
         style={[
           styles.field,

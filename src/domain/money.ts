@@ -28,11 +28,17 @@ export function formatAmount(minor: number, symbol = DEFAULT_CURRENCY_SYMBOL): s
 /**
  * User input → minor units. Accepts "1250", "1,250.5", "1250.50".
  * Returns null for anything invalid, non-positive, or with >2 decimals.
+ * Transaction amounts must be > 0; pass `allowZero` for fields where zero is
+ * meaningful (e.g. an account's opening balance).
  */
-export function parseAmountInput(text: string): number | null {
+export function parseAmountInput(
+  text: string,
+  { allowZero = false }: { allowZero?: boolean } = {},
+): number | null {
   const cleaned = text.replace(/,/g, '').trim();
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
   const [majorPart, centPart = ''] = cleaned.split('.');
   const minor = Number(majorPart) * 100 + Number(centPart.padEnd(2, '0') || '0');
-  return minor > 0 ? minor : null;
+  if (minor === 0) return allowZero ? 0 : null;
+  return minor;
 }
