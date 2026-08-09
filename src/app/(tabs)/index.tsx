@@ -8,8 +8,16 @@ import { useCallback, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BalanceHero } from '@/components/BalanceHero';
 import { TransactionRow } from '@/components/TransactionRow';
 import {
+  getMonthlySummary,
+  getTotalBalanceMinor,
+  monthKey,
+  type MonthlySummary,
+} from '@/db/queries/reports';
+import {
+  countPendingTransactions,
   listRecentTransactionItems,
   setTransactionStatus,
   type TransactionListItem,
@@ -21,9 +29,23 @@ export default function HomeScreen() {
   const { colors } = useTheme();
   const [items, setItems] = useState<TransactionListItem[]>([]);
 
+  const [totalMinor, setTotalMinor] = useState(0);
+  const [summary, setSummary] = useState<MonthlySummary>({ incomeMinor: 0, expenseMinor: 0 });
+  const [pendingCount, setPendingCount] = useState(0);
+
   const reload = useCallback(() => {
-    listRecentTransactionItems(30)
-      .then(setItems)
+    Promise.all([
+      listRecentTransactionItems(30),
+      getTotalBalanceMinor(),
+      getMonthlySummary(monthKey(new Date())),
+      countPendingTransactions(),
+    ])
+      .then(([txItems, total, monthSummary, pending]) => {
+        setItems(txItems);
+        setTotalMinor(total);
+        setSummary(monthSummary);
+        setPendingCount(pending);
+      })
       .catch((e) => Alert.alert('Database error', String(e)));
   }, []);
 
@@ -79,9 +101,17 @@ export default function HomeScreen() {
         )}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
-          items.length > 0 ? (
-            <Text style={[type.h2, styles.listTitle, { color: colors.text }]}>Recent</Text>
-          ) : null
+          <View style={styles.heroWrap}>
+            <BalanceHero
+              totalBalanceMinor={totalMinor}
+              monthIncomeMinor={summary.incomeMinor}
+              monthExpenseMinor={summary.expenseMinor}
+              pendingCount={pendingCount}
+            />
+            {items.length > 0 ? (
+              <Text style={[type.h2, styles.listTitle, { color: colors.text }]}>Recent</Text>
+            ) : null}
+          </View>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -129,7 +159,8 @@ const styles = StyleSheet.create({
     paddingBottom: space.xxl,
     gap: space.sm,
   },
-  listTitle: { marginBottom: space.sm },
+  heroWrap: { gap: space.lg, marginBottom: space.sm },
+  listTitle: { marginBottom: 0 },
   empty: {
     alignItems: 'center',
     gap: space.md,

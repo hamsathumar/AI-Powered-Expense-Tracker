@@ -20,15 +20,18 @@ interface Props {
   txType?: TransactionType;
   /** Type-scale style; defaults to the transaction-row amount style. */
   textStyle?: TextStyle;
+  /** Overrides the semantic colour, e.g. onPrimary inside the hero card
+   *  (the sign still comes from txType, keeping meaning colour-independent). */
+  colorOverride?: string;
 }
 
-export function Amount({ valueMinor, txType, textStyle = typeScale.amount }: Props) {
+export function Amount({ valueMinor, txType, textStyle = typeScale.amount, colorOverride }: Props) {
   const { colors } = useTheme();
 
   // Typed amounts are always-positive by convention; neutral values (e.g.
   // account balances) may be genuinely negative and must show it.
   const sign = txType === 'expense' ? '−' : txType === 'income' ? '+' : valueMinor < 0 ? '−' : '';
-  const color = txType ? colors[txType] : colors.text;
+  const color = colorOverride ?? (txType ? colors[txType] : colors.text);
 
   return (
     <Text style={[typeScale.amount, textStyle, { color }]}>
