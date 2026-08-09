@@ -270,6 +270,56 @@ export async function listPendingTransactions(): Promise<Transaction[]> {
   return rows.map(fromRow);
 }
 
+/** Queue items with display names, newest day first. */
+export async function listPendingTransactionItems(): Promise<TransactionListItem[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<JoinedRow>(
+    `${JOINED_SELECT}
+     WHERE t.status = 'pending'
+     ORDER BY t.occurred_at DESC`,
+  );
+  return rows.map(toListItem);
+}
+
+/** Bulk approve — one statement, used by the queue's "Approve all". */
+export async function approveAllPending(): Promise<number> {
+  const db = await getDb();
+  const result = await db.runAsync(
+    "UPDATE transactions SET status = 'approved', updated_at = ? WHERE status = 'pending'",
+    new Date().toISOString(),
+  );
+  return result.changes;
+}
+
+/** Full edit of a (pending) transaction — same shape rules as insert. */
+export async function updateTransaction(id: string, input: NewTransaction): Promise<void> {
+  if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
+    throw new Error(`amountMinor must be a positive integer, got ${input.amountMinor}`);
+  }
+  if (input.type === 'transfer' && input.accountId === input.toAccountId) {
+    throw new Error('Transfer must use two distinct accounts');
+  }
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE transactions SET
+       type = ?, direction = ?, name = ?, amount = ?, description = ?, occurred_at = ?,
+       account_id = ?, to_account_id = ?, category_id = ?, person_id = ?, updated_at = ?
+     WHERE id = ?`,
+    input.type,
+    input.type === 'lending' ? input.direction : null,
+    input.name,
+    input.amountMinor,
+    input.description ?? null,
+    input.occurredAt,
+    input.accountId,
+    input.type === 'transfer' ? input.toAccountId : null,
+    input.type === 'expense' || input.type === 'income' ? input.categoryId : null,
+    input.type === 'transfer' ? null : (input.personId ?? null),
+    new Date().toISOString(),
+    id,
+  );
+}
+
 export async function countPendingTransactions(): Promise<number> {
   const db = await getDb();
   const row = await db.getFirstAsync<{ n: number }>(

@@ -5,12 +5,39 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 
+import { evaluateRecurringTemplates } from '@/db/queries/recurring';
+import { PendingCountProvider, usePendingCount } from '@/state/PendingCount';
 import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
 
 // Keep the native splash visible until fonts are ready — avoids a flash of
 // fallback type (design-system.md §10).
 SplashScreen.preventAutoHideAsync();
+
+/** §4.5: evaluate recurring templates on launch and whenever the app
+ *  returns to the foreground. Generation is idempotent, so this is safe to
+ *  run as often as it fires. */
+function RecurringEvaluator() {
+  const { refresh } = usePendingCount();
+
+  useEffect(() => {
+    const run = () => {
+      evaluateRecurringTemplates()
+        .then((generated) => {
+          if (generated > 0) refresh();
+        })
+        .catch((e) => console.warn('Recurring evaluation failed:', e));
+    };
+    run();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') run();
+    });
+    return () => sub.remove();
+  }, [refresh]);
+
+  return null;
+}
 
 function RootStack() {
   const { colors } = useTheme();
@@ -45,8 +72,11 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-      <StatusBar style="auto" />
-      <RootStack />
+      <PendingCountProvider>
+        <RecurringEvaluator />
+        <StatusBar style="auto" />
+        <RootStack />
+      </PendingCountProvider>
     </ThemeProvider>
   );
 }

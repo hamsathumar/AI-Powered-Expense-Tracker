@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
 import type { ColorValue } from 'react-native';
 
+import { usePendingCount } from '@/state/PendingCount';
 import { useTheme } from '@/theme/ThemeContext';
 import { type as typeScale } from '@/theme/tokens';
 
@@ -21,6 +22,7 @@ function tabIcon(name: FeatherIconName) {
  */
 export default function TabsLayout() {
   const { colors } = useTheme();
+  const { count } = usePendingCount();
 
   return (
     <Tabs
@@ -48,7 +50,12 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="queue"
-        options={{ title: 'Queue', tabBarIcon: tabIcon('inbox') }}
+        options={{
+          title: 'Queue',
+          tabBarIcon: tabIcon('inbox'),
+          tabBarBadge: count > 0 ? count : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.warning, color: colors.onPrimary },
+        }}
       />
     </Tabs>
   );

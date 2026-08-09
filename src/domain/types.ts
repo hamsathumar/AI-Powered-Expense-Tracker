@@ -118,3 +118,30 @@ export type Transaction =
   | LendingTransaction;
 
 export type TransactionType = Transaction['type'];
+
+export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'custom';
+
+/**
+ * Stored transaction shape minus date/status, plus a schedule (spec §5).
+ * Field validity per type mirrors the Transaction union but is checked at
+ * generation time (templates are stored flat).
+ */
+export interface RecurringTemplate {
+  id: string;
+  type: TransactionType;
+  name: string;
+  amountMinor: number;
+  accountId?: string;
+  toAccountId?: string;
+  categoryId?: string;
+  personId?: string;
+  direction?: LendingDirection;
+  frequency: RecurringFrequency;
+  /** Only for frequency = 'custom'. */
+  intervalDays?: number;
+  /** 'yyyy-MM-dd' local date. */
+  nextDueDate: string;
+  endDate?: string;
+  active: boolean;
+  createdAt: string;
+}
