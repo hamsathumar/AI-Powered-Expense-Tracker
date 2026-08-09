@@ -82,4 +82,24 @@ or category breakdowns.
   type-conditional form (`transaction/new.tsx`, saves as pending), recent list
   on Home, native iOS date-time picker (design-system §5.9), migration 2
   removed Stage-2 test rows; all four types verified on-device.
-- Next: Stage 4 — Accounts + Categories management screens.
+- Stage 4 ✅: Accounts + Categories management (shared AccountForm/CategoryForm,
+  soft-delete archive, icon/colour pickers from `categoryPalette`).
+- Stage 5 ✅: Dashboard (BalanceHero) + Reports (category bars, month nav);
+  golden rule in `src/db/queries/reports.ts`; money math extracted to pure
+  `src/domain/rules.ts` with jest tests (`npm test`).
+- Stage 6 ✅: People + Lending + Settle Up (worded balances, approved-only
+  prefill with pending hint — decision P8).
+- Stage 7 ✅: Bill Splitter — pure `src/domain/billSplit.ts` (borrow+expense
+  pair for Case B), atomic insert, rounding tests.
+- Stage 8 ✅: real Approval Queue (grouped, approve/edit/reject/bulk, tab
+  badge via `PendingCountProvider`) + Recurring templates (pure
+  `src/domain/recurring.ts`, idempotent foreground evaluation). Long-press
+  hack removed.
+- Stage 9 ✅: Voice + Gemini — `src/ai/` (prompt, validate [tested], gemini
+  REST client on the stable generateContent endpoint, parseVoice orchestrator),
+  API key in expo-secure-store via Settings, model is a user setting
+  (default `gemini-2.5-flash`), expo-audio capture screen, floating mic on Home.
+
+**MVP build (stages 1–9) complete.** Money math + validation covered by jest
+(`npm test`). Gemini model name is user-editable in Settings — change it if
+Google deprecates the default. To re-sign weekly: `npx expo run:ios --device`.

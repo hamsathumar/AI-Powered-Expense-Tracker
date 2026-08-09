@@ -3,9 +3,9 @@
  * The balance hero card and summary arrive in Stage 5.
  */
 import { Feather } from '@expo/vector-icons';
-import { Link, useFocusEffect } from 'expo-router';
+import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BalanceHero } from '@/components/BalanceHero';
@@ -23,10 +23,11 @@ import {
 } from '@/db/queries/transactions';
 import { usePendingCount } from '@/state/PendingCount';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
+import { minTouchTarget, radius, screenPaddingH, shadow, space, type } from '@/theme/tokens';
 
 export default function HomeScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  const router = useRouter();
   const { refresh: refreshBadge } = usePendingCount();
   const [items, setItems] = useState<TransactionListItem[]>([]);
 
@@ -71,16 +72,19 @@ export default function HomeScreen() {
           <Link href="/categories" accessibilityRole="button" style={styles.iconLink}>
             <Feather name="tag" size={20} color={colors.textMuted} />
           </Link>
-        <Link
-          href="/transaction/new"
-          accessibilityRole="button"
-          style={[
-            type.label,
-            styles.addButton,
-            { backgroundColor: colors.primary, color: colors.onPrimary },
-          ]}>
-          + Add
-        </Link>
+          <Link href="/settings" accessibilityRole="button" style={styles.iconLink}>
+            <Feather name="settings" size={20} color={colors.textMuted} />
+          </Link>
+          <Link
+            href="/transaction/new"
+            accessibilityRole="button"
+            style={[
+              type.label,
+              styles.addButton,
+              { backgroundColor: colors.primary, color: colors.onPrimary },
+            ]}>
+            + Add
+          </Link>
         </View>
       </View>
 
@@ -106,11 +110,28 @@ export default function HomeScreen() {
           <View style={styles.empty}>
             <Feather name="feather" size={28} color={colors.textSubtle} />
             <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-              No transactions yet — tap + Add to record your first.
+              No transactions yet — tap the mic to record your first.
             </Text>
           </View>
         }
       />
+
+      {/* Signature interaction (design §5.5): the voice button is the app's
+          core promise — frictionless capture, one tap away, always on Home.
+          Imperative navigation (not <Link asChild>) so the function/array
+          style isn't routed through expo-router's <Slot>, which can't merge
+          it and would silently drop the button. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Log by voice"
+        onPress={() => router.push('/voice')}
+        style={({ pressed }) => [
+          styles.fab,
+          { backgroundColor: pressed ? colors.primaryPress : colors.primary },
+          !isDark && shadow,
+        ]}>
+        <Feather name="mic" size={26} color={colors.onPrimary} />
+      </Pressable>
     </SafeAreaView>
   );
 }
@@ -150,6 +171,16 @@ const styles = StyleSheet.create({
   },
   heroWrap: { gap: space.lg, marginBottom: space.sm },
   listTitle: { marginBottom: 0 },
+  fab: {
+    position: 'absolute',
+    right: screenPaddingH,
+    bottom: space.xl,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   empty: {
     alignItems: 'center',
     gap: space.md,
