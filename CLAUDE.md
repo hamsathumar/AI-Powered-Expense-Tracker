@@ -24,8 +24,13 @@ generic skill recommendations:
 Expo SDK 57 (React Native 0.86, React 19, TypeScript), expo-router (routes in
 `src/app/`), expo-sqlite, expo-secure-store, **expo-audio** (NOT expo-av — it
 was removed from the SDK), date-fns, StyleSheet + theme context (no Tailwind).
-Gemini API for voice→JSON parsing — built **last** (stage 9). Dev flow: Expo Go
-on iPhone 12 Pro via QR code.
+Gemini API for voice→JSON parsing — built **last** (stage 9).
+
+Dev flow: **local development build** (`npx expo run:ios --device`, phone
+plugged in + unlocked), then `npm start` + hot reload for daily work. NOT Expo
+Go — the App Store's Expo Go in the user's region is stuck on SDK 54 and can't
+load this SDK 57 project. Do not downgrade the SDK to chase Expo Go. Free
+Apple ID signing expires weekly → re-run `expo run:ios` to re-sign.
 
 ## The golden rule (most important logic in the app)
 
@@ -65,6 +70,12 @@ or category breakdowns.
 
 ## Status
 
-Stage 0 complete: planning docs finalized; SDK 57 default template scaffolded
-(still contains demo screens and blue template branding — cleanup is part of
-Stage 1). Next: Stage 1 (environment + scaffold, running on the iPhone).
+- Stage 1 ✅ (2026-08-09): template cleaned, theme tokens + ThemeContext,
+  Sora/Inter fonts, four-tab skeleton; verified on iPhone via local dev build.
+- Stage 2 ✅ (2026-08-09): DB layer — schema v1 + migration runner
+  (`PRAGMA user_version`), seeded categories, domain types (discriminated
+  union), typed queries with §4.2/§4.3 balance math in SQL; verified on-device
+  via the TEMPORARY `src/app/dev-db.tsx` screen (remove in Stage 3, along
+  with the Test Cash/Test Kamal rows it created).
+- Next: Stage 3 — manual transaction form + list (all four types,
+  type-conditional fields).

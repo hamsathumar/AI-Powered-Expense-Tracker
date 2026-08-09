@@ -28,11 +28,16 @@ web only). Development machine: MacBook Air M3 with Xcode. Test device: iPhone
 | Styling | **StyleSheet + theme context** | Keeps light/dark theming simple and dependency-free |
 
 ### Why Expo over bare React Native
-Expo Go lets the app run on the physical iPhone by scanning a QR code — no
-Xcode signing ritual for day-to-day work. Note: **`expo-sqlite`,
-`expo-secure-store`, and `expo-audio` work in Expo Go**, so the entire MVP can
-be developed without a custom native build. If a native module later requires it, migrate to an Expo *development
-build* (still Expo tooling, no ejecting).
+Expo removes native build complexity while keeping full React Native power —
+and an existing React mental model transfers directly.
+
+**Dev workflow (updated 2026-08-09): local development build, not Expo Go.**
+The App Store's Expo Go build in the user's region (Sri Lanka) still targets
+SDK 54 and cannot load this SDK 57 project, so the project uses a *development
+build* — our own app binary containing the Expo dev client, built locally with
+Xcode via `npx expo run:ios --device` (still Expo tooling, no ejecting).
+Day-to-day iteration is unchanged: `npm start`, scan the QR / auto-connect,
+hot reload. Do NOT downgrade the SDK to chase Expo Go compatibility.
 
 ### Why TypeScript is non-negotiable here
 A `Transaction` has conditional required fields (`category_id` required for
@@ -366,8 +371,13 @@ tested** with plain unit tests:
 
 ## 9. Distribution (Personal Use)
 
-For everyday personal use, Expo Go is sufficient. For a standalone app icon on
-the home screen, build with EAS (`eas build --platform ios --profile preview`).
-Note that a free Apple developer account limits app signing to a **7-day
-reinstall cycle**; a paid Apple Developer Program membership extends this to a
-year. No App Store submission is needed for personal use.
+Everyday use runs through the locally built development build (see §1): the
+app has its own icon on the home screen and works standalone; it only needs
+the Metro server for JS updates during development.
+
+**Signing:** with a free Apple ID, the locally signed app expires after
+**7 days** — re-run `npx expo run:ios --device` (phone plugged in, unlocked)
+to re-sign. A paid Apple Developer Program membership ($99/yr) extends signing
+to a year — only worth it if the weekly re-sign becomes annoying. The
+generated `ios/` folder is gitignored and fully regenerable. No App Store
+submission is ever needed.
