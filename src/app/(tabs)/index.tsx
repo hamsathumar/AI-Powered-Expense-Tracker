@@ -1,15 +1,21 @@
 /**
- * Home — for now: recent transactions + the entry point to the manual form.
- * The balance hero card and summary arrive in Stage 5.
+ * Home — the daily surface: balance hero, quick-actions to the secondary
+ * screens, and the Approval Queue embedded directly (grouped by day, with
+ * Approve/Edit/Reject + Approve all). The manual-add and voice FABs float
+ * bottom-right as a pair. Recent transactions now live on the Accounts tab.
  */
 import { Feather } from '@expo/vector-icons';
-import { Link, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { format, isToday, isYesterday } from 'date-fns';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Alert, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BalanceHero } from '@/components/BalanceHero';
-import { TransactionRow } from '@/components/TransactionRow';
+import { Fab } from '@/components/Fab';
+import { QueueItemCard } from '@/components/QueueItemCard';
+import { QuickActions } from '@/components/QuickActions';
 import {
   getMonthlySummary,
   getTotalBalanceMinor,
@@ -17,174 +23,192 @@ import {
   type MonthlySummary,
 } from '@/db/queries/reports';
 import {
-  countPendingTransactions,
-  listRecentTransactionItems,
+  approveAllPending,
+  listPendingTransactionItems,
+  setTransactionStatus,
   type TransactionListItem,
 } from '@/db/queries/transactions';
 import { usePendingCount } from '@/state/PendingCount';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, screenPaddingH, shadow, space, type } from '@/theme/tokens';
+import { minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
+
+function dayTitle(iso: string): string {
+  const date = new Date(iso);
+  if (isToday(date)) return 'Today';
+  if (isYesterday(date)) return 'Yesterday';
+  return format(date, 'EEE d MMM yyyy');
+}
 
 export default function HomeScreen() {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const router = useRouter();
   const { refresh: refreshBadge } = usePendingCount();
-  const [items, setItems] = useState<TransactionListItem[]>([]);
 
+  const [pending, setPending] = useState<TransactionListItem[]>([]);
   const [totalMinor, setTotalMinor] = useState(0);
   const [summary, setSummary] = useState<MonthlySummary>({ incomeMinor: 0, expenseMinor: 0 });
-  const [pendingCount, setPendingCount] = useState(0);
 
   const reload = useCallback(() => {
     Promise.all([
-      listRecentTransactionItems(30),
+      listPendingTransactionItems(),
       getTotalBalanceMinor(),
       getMonthlySummary(monthKey(new Date())),
-      countPendingTransactions(),
     ])
-      .then(([txItems, total, monthSummary, pending]) => {
-        setItems(txItems);
+      .then(([pendingItems, total, monthSummary]) => {
+        setPending(pendingItems);
         setTotalMinor(total);
         setSummary(monthSummary);
-        setPendingCount(pending);
       })
       .catch((e) => Alert.alert('Database error', String(e)));
     refreshBadge();
   }, [refreshBadge]);
 
-  // Refetch whenever the screen regains focus (e.g. returning from the form).
   useFocusEffect(reload);
+
+  const sections = useMemo(() => {
+    const byDay = new Map<string, TransactionListItem[]>();
+    for (const item of pending) {
+      const key = format(new Date(item.tx.occurredAt), 'yyyy-MM-dd');
+      byDay.set(key, [...(byDay.get(key) ?? []), item]);
+    }
+    return [...byDay.entries()].map(([key, data]) => ({
+      key,
+      title: dayTitle(data[0]!.tx.occurredAt),
+      data,
+    }));
+  }, [pending]);
+
+  const act = (id: string, status: 'approved' | 'rejected') => {
+    setTransactionStatus(id, status).then(reload);
+  };
+
+  const bulkApprove = () => {
+    Alert.alert('Approve all?', `${pending.length} pending transactions will start counting.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Approve all', onPress: () => approveAllPending().then(reload) },
+    ]);
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <View style={styles.header}>
-        <Text style={[type.h1, { color: colors.text }]}>Kaasu</Text>
-        <View style={styles.headerActions}>
-          <Link href="/recurring" accessibilityRole="button" style={styles.iconLink}>
-            <Feather name="repeat" size={20} color={colors.textMuted} />
-          </Link>
-          <Link href="/bill-split" accessibilityRole="button" style={styles.iconLink}>
-            <Feather name="divide-circle" size={20} color={colors.textMuted} />
-          </Link>
-          <Link href="/person" accessibilityRole="button" style={styles.iconLink}>
-            <Feather name="users" size={20} color={colors.textMuted} />
-          </Link>
-          <Link href="/categories" accessibilityRole="button" style={styles.iconLink}>
-            <Feather name="tag" size={20} color={colors.textMuted} />
-          </Link>
-          <Link href="/settings" accessibilityRole="button" style={styles.iconLink}>
-            <Feather name="settings" size={20} color={colors.textMuted} />
-          </Link>
-          <Link
-            href="/transaction/new"
-            accessibilityRole="button"
-            style={[
-              type.label,
-              styles.addButton,
-              { backgroundColor: colors.primary, color: colors.onPrimary },
-            ]}>
-            + Add
-          </Link>
-        </View>
-      </View>
-
-      <FlatList
-        data={items}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.tx.id}
-        renderItem={({ item }) => <TransactionRow item={item} />}
         contentContainerStyle={styles.list}
+        stickySectionHeadersEnabled={false}
         ListHeaderComponent={
-          <View style={styles.heroWrap}>
+          <View style={styles.headerBlock}>
+            <Text style={[type.h1, { color: colors.text }]}>Kaasu</Text>
             <BalanceHero
               totalBalanceMinor={totalMinor}
               monthIncomeMinor={summary.incomeMinor}
               monthExpenseMinor={summary.expenseMinor}
-              pendingCount={pendingCount}
+              pendingCount={pending.length}
             />
-            {items.length > 0 ? (
-              <Text style={[type.h2, styles.listTitle, { color: colors.text }]}>Recent</Text>
-            ) : null}
+            <QuickActions />
+            <View style={styles.queueHeading}>
+              <Text style={[type.h2, { color: colors.text }]}>
+                Queue{pending.length > 0 ? ` (${pending.length})` : ''}
+              </Text>
+              {pending.length > 1 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={bulkApprove}
+                  style={[styles.bulkButton, { backgroundColor: colors.primarySoft }]}>
+                  <Text style={[type.label, { color: colors.primary }]}>Approve all</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         }
+        renderSectionHeader={({ section }) => (
+          <Text style={[type.label, styles.sectionTitle, { color: colors.textMuted }]}>
+            {section.title}
+          </Text>
+        )}
+        renderItem={({ item }) => (
+          // Approving/rejecting removes the row — it fades and the rest slide
+          // up to fill the gap (design §7).
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(200)}
+            layout={LinearTransition.duration(220)}>
+            <QueueItemCard
+              item={item}
+              onApprove={() => act(item.tx.id, 'approved')}
+              onReject={() => act(item.tx.id, 'rejected')}
+              onEdit={() => router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })}
+            />
+          </Animated.View>
+        )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Feather name="feather" size={28} color={colors.textSubtle} />
+            <Feather name="inbox" size={28} color={colors.textSubtle} />
             <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-              No transactions yet — tap the mic to record your first.
+              Queue is clear — tap the mic or + to add something.
             </Text>
           </View>
         }
       />
 
-      {/* Signature interaction (design §5.5): the voice button is the app's
-          core promise — frictionless capture, one tap away, always on Home.
-          Imperative navigation (not <Link asChild>) so the function/array
-          style isn't routed through expo-router's <Slot>, which can't merge
-          it and would silently drop the button. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Log by voice"
-        onPress={() => router.push('/voice')}
-        style={({ pressed }) => [
-          styles.fab,
-          { backgroundColor: pressed ? colors.primaryPress : colors.primary },
-          !isDark && shadow,
-        ]}>
-        <Feather name="mic" size={26} color={colors.onPrimary} />
-      </Pressable>
+      {/* Manual add (top) + voice (bottom) as a related pair, one-handed
+          reachable above the tab bar (design §5.5 / §4.1). */}
+      <View style={styles.fabStack}>
+        <Fab
+          icon="plus"
+          size={52}
+          accessibilityLabel="Add transaction"
+          onPress={() => router.push('/transaction/new')}
+        />
+        <Fab
+          icon="mic"
+          size={60}
+          accessibilityLabel="Log by voice"
+          onPress={() => router.push('/voice')}
+        />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
-  header: {
+  list: {
+    paddingHorizontal: screenPaddingH,
+    paddingBottom: space.xxl * 3,
+    gap: space.sm,
+  },
+  headerBlock: {
+    gap: space.lg,
+    paddingTop: space.md,
+    marginBottom: space.sm,
+  },
+  queueHeading: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: screenPaddingH,
-    paddingVertical: space.md,
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-  },
-  iconLink: {
-    minHeight: minTouchTarget,
-    minWidth: minTouchTarget,
-    textAlign: 'center',
-    paddingTop: space.md,
-  },
-  addButton: {
+  bulkButton: {
     minHeight: minTouchTarget - space.sm,
     borderRadius: radius.pill,
     paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    overflow: 'hidden',
-    textAlign: 'center',
-  },
-  list: {
-    paddingHorizontal: screenPaddingH,
-    paddingBottom: space.xxl,
-    gap: space.sm,
-  },
-  heroWrap: { gap: space.lg, marginBottom: space.sm },
-  listTitle: { marginBottom: 0 },
-  fab: {
-    position: 'absolute',
-    right: screenPaddingH,
-    bottom: space.xl,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
     justifyContent: 'center',
+  },
+  sectionTitle: {
+    marginTop: space.md,
+    marginBottom: space.xs,
   },
   empty: {
     alignItems: 'center',
     gap: space.md,
-    paddingTop: space.xxl * 2,
+    paddingTop: space.xl,
   },
   emptyText: { textAlign: 'center' },
+  fabStack: {
+    position: 'absolute',
+    right: screenPaddingH,
+    bottom: space.xl,
+    alignItems: 'center',
+    gap: space.md,
+  },
 });

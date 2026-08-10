@@ -85,10 +85,10 @@ export const light = {
   surfaceAlt:    '#F4EBE3',  // subtle raised/secondary panels
   border:        '#E8DDD3',
 
-  // Brand
-  primary:       '#7A4A34',  // deep warm brown — primary actions, active nav
-  primaryPress:  '#653B29',
-  primarySoft:   '#F0E1D7',  // tinted backgrounds, selected chips
+  // Brand — richer warm brown (vibrant pass 2026-08-10)
+  primary:       '#8A4A2A',  // warm brown — primary actions, active nav
+  primaryPress:  '#6E3A22',
+  primarySoft:   '#F8E2D2',  // warm peach tint — selected chips, tiles
   onPrimary:     '#FFFFFF',
 
   // Text
@@ -96,16 +96,21 @@ export const light = {
   textMuted:     '#7A6E66',
   textSubtle:    '#A2958B',
 
-  // Semantic — ALWAYS paired with sign/icon/label
-  expense:       '#B4462F',  // warm red-clay, not alarm red
-  income:        '#3F7A52',  // muted forest green, not neon
-  transfer:      '#4A6F94',  // calm blue — movement, neutral
-  lending:       '#8A6A3B',  // amber-brown — owed/outstanding
-  warning:       '#B8853A',  // pending / needs review flags
+  // Semantic — vivid but ≥4.5:1 as numerals; ALWAYS paired with sign/icon/label
+  expense:       '#D1462F',  // vivid clay-red (never a dominant fill)
+  income:        '#1E9557',  // vivid emerald
+  transfer:      '#2C74BE',  // clear blue
+  lending:       '#B07514',  // rich gold
+  warning:       '#C98A1E',  // amber — pending / needs review
+
+  // Account-type accents (paired with the type label, not colour-alone)
+  accountCash:   '#23A866',
+  accountBank:   '#2C74BE',
+  accountCard:   '#7B5AD6',
 
   // Feedback
-  success:       '#3F7A52',
-  danger:        '#B4462F',
+  success:       '#1E9557',
+  danger:        '#D1462F',
 };
 ```
 
@@ -121,25 +126,37 @@ export const dark = {
   surfaceAlt:    '#2E2621',
   border:        '#3A302A',
 
-  primary:       '#C89070',  // lifted brown — legible on dark
-  primaryPress:  '#D9A184',
-  primarySoft:   '#33281F',
+  primary:       '#E09763',  // lifted warm brown — legible on dark
+  primaryPress:  '#EDA97A',
+  primarySoft:   '#3E2C1E',
   onPrimary:     '#1A1614',
 
   text:          '#F2EAE3',
   textMuted:     '#B0A199',
   textSubtle:    '#7E7069',
 
-  expense:       '#E08A72',
-  income:        '#7FBF95',
-  transfer:      '#8FB2D4',
-  lending:       '#D4AE72',
-  warning:       '#E0B36B',
+  expense:       '#FF8266',
+  income:        '#55D08C',
+  transfer:      '#6FB2F2',
+  lending:       '#F0B84E',
+  warning:       '#F2C24F',
 
-  success:       '#7FBF95',
-  danger:        '#E08A72',
+  accountCash:   '#55D08C',
+  accountBank:   '#6FB2F2',
+  accountCard:   '#A98CF0',
+
+  success:       '#55D08C',
+  danger:        '#FF8266',
 };
 ```
+
+**Vibrancy vs. accessibility (2026-08-10):** the palette was made livelier while
+keeping the two hard rules — colour never signals meaning alone (sign/icon/label
+always present), and red is never a dominant surface (only amounts/small
+accents/destructive actions). The warm cream base + brown brand anchor stay as
+the calm dominant surface; vibrancy comes from the semantic colours, category
+palette, and account-type accents. Coloured numerals keep ≥4.5:1; the brightest
+tints are reserved for icon-tiles/segments/chips (fills paired with icon+label).
 
 ### 2.5 Colour meaning map (must stay consistent app-wide)
 | Colour | Means | Used on |
@@ -152,9 +169,11 @@ export const dark = {
 | Warning amber | Needs attention | Pending badge, confidence flags |
 
 ### 2.6 Category colours
-Categories get their own icon + colour (user-assignable), drawn from a fixed
-palette so custom categories never clash with semantic colours above. Keep
-category hues distinguishable in charts; provide ~12 preset options.
+Categories get their own icon + colour (user-assignable), from a fixed 12-colour
+palette — vibrant but harmonious, distinct from the semantic colours, and
+distinguishable as pie/donut segments:
+`#D1462F #EE7D30 #F2A925 #8FB22E #23A866 #16A89C #2E93D9 #3E6FD6 #7B5AD6 #C74FB0
+#E0698F #9C7A5A`.
 
 ---
 
@@ -275,6 +294,32 @@ expression of who owes whom.
 Warm, brief, actionable. "No transactions yet — tap the mic to add your first."
 Never a bare "No data."
 
+### 5.11 Donut chart (added 2026-08-10)
+Reports shows a **donut** below the category bar list (additive, not a
+replacement). Hand-built on **react-native-svg** — no chart library. Segments
+use each category's palette colour (same as its bar); percentage labels sit on
+segments ≥8%; the center hole shows the period total. Tapping a segment selects
+it (dims the others) and highlights the matching bar row; tapping a bar row does
+the same in reverse. Reflects the current month + the spending-by-category data
+(golden-rule filtered in SQL). A charting lib was deliberately avoided
+(RN-version compat risk); SVG is the Expo-safe path.
+
+### 5.10 Settings screen (accordion — updated 2026-08-10)
+**Profile** stays pinned at the top, always visible: centered circular avatar —
+tap to pick a gallery photo, camera-overlay badge — with a name field beneath.
+
+Below it, an **accordion** of three collapsed section rows, **one open at a
+time** (opening one closes the others) to keep the screen short. Each row is a
+bordered surface card: leading icon + title + a chevron (down collapsed, up
+expanded); tapping toggles it with an `easeInEaseOut` LayoutAnimation. The rows:
+- **Currency** → the chip picker (display-only; "never converts existing amounts").
+- **Data & Backup** → Create / Restore / Clear-all action rows (Clear is
+  danger-coloured, type-to-confirm "DELETE").
+- **Voice (Gemini)** → API key + model.
+
+Destructive actions always state what will happen before proceeding. Reuse the
+rounded tinted-icon-square and ChipSelector patterns; no new visual language.
+
 ### 5.9 Date & Time Field (added 2026-08-09)
 Use the **native iOS picker** (`@react-native-community/datetimepicker`,
 mode `datetime`, display `compact`) — the system pill that expands into the
@@ -285,41 +330,65 @@ positioning. Do not build a custom calendar.
 
 ---
 
-## 6. Navigation
+## 6. Navigation (restructured 2026-08-10)
 
-Bottom tab bar, four tabs (matching the mental model, not the entity list):
+Bottom tab bar, four tabs:
 
 | Tab | Icon | Contains |
 |---|---|---|
-| **Home** | house | Balance hero, summary, quick links |
-| **Accounts** | card | Account list + balances |
+| **Home** | house | Balance hero, quick-action row, **embedded Approval Queue** |
+| **Accounts** | card | Account cards + a searchable, account-filterable transaction list |
 | **Reports** | chart | Charts, category breakdown |
-| **Queue** | inbox | Approval queue — **with a badge showing pending count** |
+| **Settings** | gear | Gemini key/model and app settings |
 
-**Floating voice button** sits above the tab bar, always visible on Home. This
-is deliberate: the app's core promise is frictionless capture, so its primary
-action must never be more than one tap away.
+**Home layout, top to bottom:** header (just the "Kaasu" title) → Balance Hero
+→ **quick-action row** → **Approval Queue** (grouped by day, Approve/Edit/Reject
++ Approve all; heading badged "Queue (N)"). The Queue is no longer a tab — it
+lives here. There is no Recent-transactions list on Home; that list lives on
+Accounts.
 
-Secondary screens (People, Bill Splitter, Recurring, Categories, Settings) are
-reached from Home or a profile menu — kept out of the tab bar to avoid the
-overcrowding the user explicitly wanted to avoid.
+**Quick-action row:** a single horizontal row of four icon+label tiles —
+Recurring · Split · People · Categories — reusing the rounded tinted-icon-square
+language. These replace the old Home header icons. (Fall back to a 2×2 grid only
+if labels crowd on-device.)
+
+**Accounts:** account cards on top; tapping a card **selects/filters** the
+transaction list below to that account (including transfers that touch it — real
+money moves through it); a trailing pencil icon edits the account. A search box
+filters the list by name/description.
+
+**Floating buttons (design §5.5 / §4.1):** on Home, a stacked pair bottom-right —
+manual **+ Add** (secondary, 52pt) above the **voice mic** (signature, 60pt),
+both one-handed reachable above the tab bar. On Accounts, a single **+ account**
+FAB bottom-right, same treatment. Never bury the voice button — the app's core
+promise is frictionless capture, one tap away.
+
+Remaining secondary screens (Bill Splitter, Recurring, People, Categories) are
+reached from the Home quick-action row — kept out of the tab bar to avoid
+overcrowding.
 
 ---
 
-## 7. Motion
+## 7. Motion (animation pass 2026-08-10)
 
-Calm and quick. Motion confirms actions; it never performs.
+Calm and quick. Motion confirms actions; it never performs. Implemented with
+**react-native-reanimated** (already installed) + expo-router transitions — no
+new library, no rebuild.
 
 | Interaction | Duration | Notes |
 |---|---|---|
-| Screen transitions | 250ms | Standard push/slide |
-| Button press | 100ms | Scale to 0.97 |
+| Screen push (forms, detail) | native iOS slide | expo-router Stack `slide_from_right` + back gesture |
+| Voice capture screen | slide up | `presentation: 'modal'`, `slide_from_bottom` — reads as an overlay |
+| Tab switch | ~shift | expo-router Tabs `animation: 'shift'` — smooth, not an instant cut |
+| Button / FAB press | ~90–140ms | scale to 0.97 (FAB 0.90), `PressableScale` (reanimated) |
 | Chip selection | 150ms | Background fade |
-| Queue approve | 250ms | Row fades and collapses out |
+| Queue approve/reject | ~200ms | Row fades out (`FadeOut`) + remaining rows slide up (`LinearTransition`) |
+| List item appear | ~200ms | `FadeIn` on genuinely new rows |
 | Voice pulse | 1200ms loop | Gentle, non-urgent |
 
 Respect **reduce-motion** system settings. No bounces, no parallax, no
-celebratory confetti — this is a money app, not a game.
+celebratory confetti — this is a money app, not a game. The principles are
+unchanged; this pass just applies them consistently.
 
 ---
 

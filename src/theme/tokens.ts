@@ -12,17 +12,21 @@ import { Platform, type TextStyle } from 'react-native';
 // Colours (design-system.md §2)
 // ---------------------------------------------------------------------------
 
+// Palette (design-system.md §2). Vibrant pass 2026-08-10: the warm cream base
+// + brown brand anchor stay as the calm dominant surface; vibrancy comes from
+// richer semantic colours, category palette, and account-type accents. Colour
+// still NEVER signals meaning alone — always paired with sign/icon/label.
 export const lightColors = {
-  // Surfaces — the dominant 60%+
+  // Surfaces — the dominant 60%+ (unchanged: calm base + text contrast)
   bg:           '#FBF6F1', // warm off-white, app background
   surface:      '#FFFFFF', // cards
   surfaceAlt:   '#F4EBE3', // subtle raised/secondary panels
   border:       '#E8DDD3',
 
-  // Brand
-  primary:      '#7A4A34', // deep warm brown — primary actions, active nav
-  primaryPress: '#653B29',
-  primarySoft:  '#F0E1D7', // tinted backgrounds, selected chips
+  // Brand — richer warm brown
+  primary:      '#8A4A2A', // warm brown — primary actions, active nav
+  primaryPress: '#6E3A22',
+  primarySoft:  '#F8E2D2', // warm peach tint — selected chips, tiles
   onPrimary:    '#FFFFFF',
 
   // Text
@@ -30,16 +34,21 @@ export const lightColors = {
   textMuted:    '#7A6E66',
   textSubtle:   '#A2958B',
 
-  // Semantic — ALWAYS paired with sign/icon/label, never colour alone
-  expense:      '#B4462F', // warm red-clay, not alarm red
-  income:       '#3F7A52', // muted forest green, not neon
-  transfer:     '#4A6F94', // calm blue — movement, neutral
-  lending:      '#8A6A3B', // amber-brown — owed/outstanding
-  warning:      '#B8853A', // pending / needs review flags
+  // Semantic — vivid but ≥4.5:1 as numerals; ALWAYS paired with sign/icon/label
+  expense:      '#D1462F', // vivid clay-red (never a dominant fill)
+  income:       '#1E9557', // vivid emerald
+  transfer:     '#2C74BE', // clear blue
+  lending:      '#B07514', // rich gold
+  warning:      '#C98A1E', // amber — pending / needs review
+
+  // Account-type accents (paired with the type label, not colour-alone)
+  accountCash:  '#23A866',
+  accountBank:  '#2C74BE',
+  accountCard:  '#7B5AD6',
 
   // Feedback
-  success:      '#3F7A52',
-  danger:       '#B4462F',
+  success:      '#1E9557',
+  danger:       '#D1462F',
 } as const;
 
 export const darkColors: ThemeColors = {
@@ -48,46 +57,49 @@ export const darkColors: ThemeColors = {
   surfaceAlt:   '#2E2621',
   border:       '#3A302A',
 
-  primary:      '#C89070', // lifted brown — legible on dark
-  primaryPress: '#D9A184',
-  primarySoft:  '#33281F',
+  primary:      '#E09763', // lifted warm brown — legible on dark
+  primaryPress: '#EDA97A',
+  primarySoft:  '#3E2C1E',
   onPrimary:    '#1A1614',
 
   text:         '#F2EAE3',
   textMuted:    '#B0A199',
   textSubtle:   '#7E7069',
 
-  expense:      '#E08A72',
-  income:       '#7FBF95',
-  transfer:     '#8FB2D4',
-  lending:      '#D4AE72',
-  warning:      '#E0B36B',
+  expense:      '#FF8266',
+  income:       '#55D08C',
+  transfer:     '#6FB2F2',
+  lending:      '#F0B84E',
+  warning:      '#F2C24F',
 
-  success:      '#7FBF95',
-  danger:       '#E08A72',
+  accountCash:  '#55D08C',
+  accountBank:  '#6FB2F2',
+  accountCard:  '#A98CF0',
+
+  success:      '#55D08C',
+  danger:       '#FF8266',
 };
 
 export type ThemeColors = { [K in keyof typeof lightColors]: string };
 
 /**
- * Category colours (design-system.md §2.6): a fixed ~12-option palette for
- * user-assignable category colours, deliberately distinct from the semantic
- * colours above so custom categories never clash with them, and muted enough
- * to stay distinguishable in charts.
+ * Category colours (design-system.md §2.6): a fixed 12-option palette for
+ * user-assignable category colours — vibrant but harmonious, distinct from
+ * the semantic colours, and distinguishable as pie/donut segments.
  */
 export const categoryPalette = [
-  '#D08C60', // apricot
-  '#A87C4F', // caramel
-  '#8C9A5B', // olive
-  '#5B8A72', // sage
-  '#4E8A8B', // teal
-  '#6D8FB0', // dusty blue
-  '#7D6FA0', // muted violet
-  '#B07A8C', // rose
-  '#C2856B', // clay
-  '#9C8A3C', // mustard
-  '#6B7F5C', // moss
-  '#8A7B6B', // taupe
+  '#D1462F', // coral-red
+  '#EE7D30', // orange
+  '#F2A925', // amber
+  '#8FB22E', // lime-olive
+  '#23A866', // emerald
+  '#16A89C', // teal
+  '#2E93D9', // sky blue
+  '#3E6FD6', // indigo
+  '#7B5AD6', // violet
+  '#C74FB0', // magenta
+  '#E0698F', // rose
+  '#9C7A5A', // warm taupe
 ] as const;
 
 // ---------------------------------------------------------------------------

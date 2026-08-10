@@ -4,6 +4,7 @@
  * here.
  */
 import { getDb } from '@/db/client';
+import { DEFAULT_CURRENCY_CODE } from '@/domain/money';
 
 export async function getSetting(key: string): Promise<string | null> {
   const db = await getDb();
@@ -26,6 +27,9 @@ export async function setSetting(key: string, value: string): Promise<void> {
 
 export const SETTINGS_KEYS = {
   geminiModel: 'gemini_model',
+  defaultCurrency: 'default_currency',
+  profileName: 'profile_name',
+  profilePhotoUri: 'profile_photo_uri',
 } as const;
 
 /**
@@ -38,4 +42,21 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 export async function getGeminiModel(): Promise<string> {
   return (await getSetting(SETTINGS_KEYS.geminiModel)) ?? DEFAULT_GEMINI_MODEL;
+}
+
+export async function getCurrencyCode(): Promise<string> {
+  return (await getSetting(SETTINGS_KEYS.defaultCurrency)) ?? DEFAULT_CURRENCY_CODE;
+}
+
+export interface Profile {
+  name: string | null;
+  photoUri: string | null;
+}
+
+export async function getProfile(): Promise<Profile> {
+  const [name, photoUri] = await Promise.all([
+    getSetting(SETTINGS_KEYS.profileName),
+    getSetting(SETTINGS_KEYS.profilePhotoUri),
+  ]);
+  return { name, photoUri };
 }

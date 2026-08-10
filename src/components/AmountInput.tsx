@@ -5,7 +5,8 @@
  */
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { DEFAULT_CURRENCY_SYMBOL, parseAmountInput } from '@/domain/money';
+import { parseAmountInput } from '@/domain/money';
+import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
 import { radius, space, type } from '@/theme/tokens';
 
@@ -19,6 +20,7 @@ interface Props {
 
 export function AmountInput({ value, onChange, label = 'Amount', allowZero = false }: Props) {
   const { colors } = useTheme();
+  const { symbol } = useCurrency();
   const invalid = value.length > 0 && parseAmountInput(value, { allowZero }) === null;
 
   return (
@@ -32,9 +34,7 @@ export function AmountInput({ value, onChange, label = 'Amount', allowZero = fal
             borderColor: invalid ? colors.danger : colors.border,
           },
         ]}>
-        <Text style={[type.display, { color: colors.textSubtle }]}>
-          {DEFAULT_CURRENCY_SYMBOL}
-        </Text>
+        <Text style={[type.display, { color: colors.textSubtle }]}>{symbol}</Text>
         <TextInput
           value={value}
           onChangeText={onChange}

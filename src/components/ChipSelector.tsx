@@ -18,7 +18,7 @@ export interface ChipItem {
 }
 
 interface Props {
-  label: string;
+  label?: string;
   items: ChipItem[];
   selectedId?: string | null;
   /** Multi-select mode: pass the selected set instead of selectedId. */
@@ -42,7 +42,7 @@ export function ChipSelector({
 
   return (
     <View style={styles.container}>
-      <Text style={[type.label, { color: colors.textMuted }]}>{label}</Text>
+      {label ? <Text style={[type.label, { color: colors.textMuted }]}>{label}</Text> : null}
       {items.length === 0 && emptyHint ? (
         <Text style={[type.caption, { color: colors.textSubtle }]}>{emptyHint}</Text>
       ) : null}

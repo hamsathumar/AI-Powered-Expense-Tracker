@@ -26,6 +26,15 @@ web only). Development machine: MacBook Air M3 with Xcode. Test device: iPhone
 | Icons | **@expo/vector-icons** | Bundled with Expo; no separate setup |
 | Dates | **date-fns** | Lighter than moment; needed for recurring schedules |
 | Styling | **StyleSheet + theme context** | Keeps light/dark theming simple and dependency-free |
+| Image pick | **expo-image-picker** | Profile photo (gallery only); needs `NSPhotoLibraryUsageDescription` via plugin + prebuild |
+| Files | **expo-file-system** | New `File`/`Paths` API — write/read backup JSON, copy profile photo into `Paths.document` |
+| Share | **expo-sharing** | Hand a backup file to the iOS share sheet |
+| Doc pick | **expo-document-picker** | Pick a backup file to restore |
+
+Any change to a native config plugin (permission strings, new plugins) needs
+`npx expo prebuild` before `expo run:ios` — run:ios skips prebuild once `ios/`
+exists, so config-plugin edits (e.g. the photo/mic permission) won't reach
+`Info.plist` otherwise.
 
 ### Why Expo over bare React Native
 Expo removes native build complexity while keeping full React Native power —
@@ -333,6 +342,22 @@ so nothing spoken is ever lost. Retry later or let the user fill it manually.
   system) — pair with sign, icon, or label.
 - **Performance.** Aggregate in SQL, not JavaScript. Indexes above cover the
   common report queries.
+
+### 6.1 Settings data flow (added 2026-08-10)
+- **Currency** is a DISPLAY setting only — `settings.default_currency`. It swaps
+  the symbol/code (`CurrencyContext` → `<Amount>`/formatter) and NEVER converts
+  stored integers. `money.ts` holds a fixed code→symbol list + an active-symbol
+  the formatter reads; `CurrencyContext` keeps it in sync on load/change.
+- **Profile** (name, photo) is local personal info in `settings`
+  (`profile_name`, `profile_photo_uri`). The picked gallery image is **copied
+  into `Paths.document`** (persistent) — never store the transient gallery URI.
+- **Backup** is one JSON file (`src/domain/backupFormat.ts` = pure format +
+  validation; `src/db/backup.ts` = DB export/restore). Header
+  `{ app: "Kaasu", version, schemaVersion, exportedAt }` + every table's rows.
+  **Restore REPLACES all data** inside one exclusive transaction (validate →
+  delete all → insert). **Clear All Data** wipes all tables + re-seeds default
+  categories; it keeps the Gemini key (keychain, a credential) but deletes the
+  profile photo file.
 
 ---
 

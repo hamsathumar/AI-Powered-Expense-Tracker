@@ -3,7 +3,6 @@ import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
 import type { ColorValue } from 'react-native';
 
-import { usePendingCount } from '@/state/PendingCount';
 import { useTheme } from '@/theme/ThemeContext';
 import { type as typeScale } from '@/theme/tokens';
 
@@ -16,18 +15,20 @@ function tabIcon(name: FeatherIconName) {
 }
 
 /**
- * The four tabs from design-system.md §6: Home · Accounts · Reports · Queue.
- * Secondary screens (People, Bill Splitter, Recurring, Categories, Settings)
- * are deliberately NOT tabs — they'll be reached from Home.
+ * Four tabs (design §6): Home · Accounts · Reports · Settings.
+ * The Approval Queue is embedded in Home (no longer a tab); other secondary
+ * screens (People, Bill Splitter, Recurring, Categories) are reached from
+ * Home's quick-action row.
  */
 export default function TabsLayout() {
   const { colors } = useTheme();
-  const { count } = usePendingCount();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
+        // Smooth cross-shift between tabs instead of an instant cut (design §7).
+        animation: 'shift',
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textSubtle,
         tabBarStyle: {
@@ -36,27 +37,13 @@ export default function TabsLayout() {
         },
         tabBarLabelStyle: { fontFamily: typeScale.caption.fontFamily },
       }}>
-      <Tabs.Screen
-        name="index"
-        options={{ title: 'Home', tabBarIcon: tabIcon('home') }}
-      />
+      <Tabs.Screen name="index" options={{ title: 'Home', tabBarIcon: tabIcon('home') }} />
       <Tabs.Screen
         name="accounts"
         options={{ title: 'Accounts', tabBarIcon: tabIcon('credit-card') }}
       />
-      <Tabs.Screen
-        name="reports"
-        options={{ title: 'Reports', tabBarIcon: tabIcon('pie-chart') }}
-      />
-      <Tabs.Screen
-        name="queue"
-        options={{
-          title: 'Queue',
-          tabBarIcon: tabIcon('inbox'),
-          tabBarBadge: count > 0 ? count : undefined,
-          tabBarBadgeStyle: { backgroundColor: colors.warning, color: colors.onPrimary },
-        }}
-      />
+      <Tabs.Screen name="reports" options={{ title: 'Reports', tabBarIcon: tabIcon('pie-chart') }} />
+      <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: tabIcon('settings') }} />
     </Tabs>
   );
 }

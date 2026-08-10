@@ -13,6 +13,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Amount } from '@/components/Amount';
+import { DonutChart } from '@/components/DonutChart';
 import {
   getMonthlySummary,
   getSpendingByCategory,
@@ -28,6 +29,7 @@ export default function ReportsScreen() {
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [summary, setSummary] = useState<MonthlySummary>({ incomeMinor: 0, expenseMinor: 0 });
   const [categories, setCategories] = useState<CategorySpending[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const month = monthKey(monthDate);
   const isCurrentMonth = month === monthKey(new Date());
@@ -37,6 +39,7 @@ export default function ReportsScreen() {
       .then(([s, c]) => {
         setSummary(s);
         setCategories(c);
+        setSelectedId(null);
       })
       .catch((e) => Alert.alert('Database error', String(e)));
   }, [month]);
@@ -90,41 +93,65 @@ export default function ReportsScreen() {
             </Text>
           </View>
         ) : (
-          <View style={styles.barList}>
-            {categories.map((cat) => {
-              const fraction = maxCategoryMinor > 0 ? cat.totalMinor / maxCategoryMinor : 0;
-              const share =
-                summary.expenseMinor > 0
-                  ? Math.round((cat.totalMinor / summary.expenseMinor) * 100)
-                  : 0;
-              const barColor = cat.color ?? colors.expense;
-              return (
-                <View key={cat.categoryId} style={styles.barItem}>
-                  <View style={styles.barHeader}>
-                    <Feather
-                      name={(cat.icon as ComponentProps<typeof Feather>['name']) ?? 'circle'}
-                      size={14}
-                      color={barColor}
-                    />
-                    <Text numberOfLines={1} style={[type.label, styles.barName, { color: colors.text }]}>
-                      {cat.name}
-                    </Text>
-                    <Text style={[type.caption, { color: colors.textMuted }]}>{share}%</Text>
-                    <Amount valueMinor={cat.totalMinor} txType="expense" textStyle={type.label} />
-                  </View>
-                  <View style={[styles.barTrack, { backgroundColor: colors.surfaceAlt }]}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        { backgroundColor: barColor, flex: Math.max(fraction, 0.02) },
-                      ]}
-                    />
-                    <View style={{ flex: 1 - Math.max(fraction, 0.02) }} />
-                  </View>
-                </View>
-              );
-            })}
-          </View>
+          <>
+            <View style={styles.barList}>
+              {categories.map((cat) => {
+                const fraction = maxCategoryMinor > 0 ? cat.totalMinor / maxCategoryMinor : 0;
+                const share =
+                  summary.expenseMinor > 0
+                    ? Math.round((cat.totalMinor / summary.expenseMinor) * 100)
+                    : 0;
+                const barColor = cat.color ?? colors.expense;
+                const selected = cat.categoryId === selectedId;
+                return (
+                  <Pressable
+                    key={cat.categoryId}
+                    accessibilityRole="button"
+                    onPress={() =>
+                      setSelectedId((prev) => (prev === cat.categoryId ? null : cat.categoryId))
+                    }
+                    style={[
+                      styles.barItem,
+                      selected && { backgroundColor: colors.surfaceAlt, borderColor: barColor },
+                    ]}>
+                    <View style={styles.barHeader}>
+                      <Feather
+                        name={(cat.icon as ComponentProps<typeof Feather>['name']) ?? 'circle'}
+                        size={14}
+                        color={barColor}
+                      />
+                      <Text numberOfLines={1} style={[type.label, styles.barName, { color: colors.text }]}>
+                        {cat.name}
+                      </Text>
+                      <Text style={[type.caption, { color: colors.textMuted }]}>{share}%</Text>
+                      <Amount valueMinor={cat.totalMinor} txType="expense" textStyle={type.label} />
+                    </View>
+                    <View style={[styles.barTrack, { backgroundColor: colors.surfaceAlt }]}>
+                      <View
+                        style={[
+                          styles.barFill,
+                          { backgroundColor: barColor, flex: Math.max(fraction, 0.02) },
+                        ]}
+                      />
+                      <View style={{ flex: 1 - Math.max(fraction, 0.02) }} />
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <DonutChart
+              total={summary.expenseMinor}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              segments={categories.map((cat) => ({
+                id: cat.categoryId,
+                label: cat.name,
+                value: cat.totalMinor,
+                color: cat.color ?? colors.expense,
+              }))}
+            />
+          </>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -161,8 +188,14 @@ const styles = StyleSheet.create({
     padding: space.lg,
     gap: space.xs,
   },
-  barList: { gap: space.lg },
-  barItem: { gap: space.xs },
+  barList: { gap: space.sm },
+  barItem: {
+    gap: space.xs,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: radius.md,
+    padding: space.sm,
+  },
   barHeader: {
     flexDirection: 'row',
     alignItems: 'center',

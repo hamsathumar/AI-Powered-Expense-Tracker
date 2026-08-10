@@ -13,7 +13,7 @@ import { buildVoiceDraft, type VoiceContext, type VoiceDraft } from '@/ai/valida
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
-import { getGeminiModel } from '@/db/queries/settings';
+import { getCurrencyCode, getGeminiModel } from '@/db/queries/settings';
 import { insertTransaction, type NewTransaction } from '@/db/queries/transactions';
 import type { ConfidenceFlag } from '@/domain/types';
 
@@ -26,14 +26,15 @@ export interface VoiceResult {
 }
 
 async function loadContext(): Promise<{ voice: VoiceContext; prompt: PromptContext }> {
-  const [accounts, expenseCategories, incomeCategories, people] = await Promise.all([
+  const [accounts, expenseCategories, incomeCategories, people, currencyCode] = await Promise.all([
     listAccounts(),
     listCategories('expense'),
     listCategories('income'),
     listPeople(),
+    getCurrencyCode(),
   ]);
   const voice: VoiceContext = { accounts, expenseCategories, incomeCategories, people };
-  return { voice, prompt: { ...voice, currencyCode: 'LKR' } };
+  return { voice, prompt: { ...voice, currencyCode } };
 }
 
 function assemble(draft: VoiceDraft, personId: string | undefined): NewTransaction {

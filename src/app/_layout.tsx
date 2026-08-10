@@ -9,6 +9,7 @@ import { AppState } from 'react-native';
 
 import { evaluateRecurringTemplates } from '@/db/queries/recurring';
 import { PendingCountProvider, usePendingCount } from '@/state/PendingCount';
+import { CurrencyProvider } from '@/theme/CurrencyContext';
 import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
 
 // Keep the native splash visible until fonts are ready — avoids a flash of
@@ -46,8 +47,12 @@ function RootStack() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: colors.bg },
+        // Native iOS slide for pushed screens (forms, detail pages) + back gesture.
+        animation: 'slide_from_right',
       }}>
       <Stack.Screen name="(tabs)" />
+      {/* Voice capture reads as an overlay — slide up from the bottom. */}
+      <Stack.Screen name="voice" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
     </Stack>
   );
 }
@@ -72,11 +77,13 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-      <PendingCountProvider>
-        <RecurringEvaluator />
-        <StatusBar style="auto" />
-        <RootStack />
-      </PendingCountProvider>
+      <CurrencyProvider>
+        <PendingCountProvider>
+          <RecurringEvaluator />
+          <StatusBar style="auto" />
+          <RootStack />
+        </PendingCountProvider>
+      </CurrencyProvider>
     </ThemeProvider>
   );
 }

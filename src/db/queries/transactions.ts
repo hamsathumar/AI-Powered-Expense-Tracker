@@ -226,6 +226,43 @@ function toListItem(row: JoinedRow): TransactionListItem {
   };
 }
 
+export interface TransactionListFilter {
+  /** Only transactions touching this account — including transfers where it
+   *  is the source OR destination (a transfer moves real money through it). */
+  accountId?: string;
+  /** Case-insensitive substring match on name or description. */
+  search?: string;
+  limit?: number;
+}
+
+export async function listTransactionItems(
+  filter: TransactionListFilter = {},
+): Promise<TransactionListItem[]> {
+  const db = await getDb();
+  const where: string[] = ["t.status != 'rejected'"];
+  const params: (string | number)[] = [];
+
+  if (filter.accountId) {
+    where.push('(t.account_id = ? OR t.to_account_id = ?)');
+    params.push(filter.accountId, filter.accountId);
+  }
+  if (filter.search?.trim()) {
+    where.push('(t.name LIKE ? OR t.description LIKE ?)');
+    const like = `%${filter.search.trim()}%`;
+    params.push(like, like);
+  }
+  params.push(filter.limit ?? 200);
+
+  const rows = await db.getAllAsync<JoinedRow>(
+    `${JOINED_SELECT}
+     WHERE ${where.join(' AND ')}
+     ORDER BY t.occurred_at DESC
+     LIMIT ?`,
+    ...params,
+  );
+  return rows.map(toListItem);
+}
+
 export async function listRecentTransactionItems(limit = 50): Promise<TransactionListItem[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<JoinedRow>(

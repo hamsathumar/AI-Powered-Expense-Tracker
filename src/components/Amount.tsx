@@ -11,6 +11,7 @@ import { Text, type TextStyle } from 'react-native';
 
 import { formatAmount } from '@/domain/money';
 import type { TransactionType } from '@/domain/types';
+import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
 import { type as typeScale } from '@/theme/tokens';
 
@@ -27,6 +28,7 @@ interface Props {
 
 export function Amount({ valueMinor, txType, textStyle = typeScale.amount, colorOverride }: Props) {
   const { colors } = useTheme();
+  const { symbol } = useCurrency(); // subscribe so amounts re-render on change
 
   // Typed amounts are always-positive by convention; neutral values (e.g.
   // account balances) may be genuinely negative and must show it.
@@ -36,7 +38,7 @@ export function Amount({ valueMinor, txType, textStyle = typeScale.amount, color
   return (
     <Text style={[typeScale.amount, textStyle, { color }]}>
       {sign}
-      {formatAmount(valueMinor)}
+      {formatAmount(valueMinor, symbol)}
     </Text>
   );
 }

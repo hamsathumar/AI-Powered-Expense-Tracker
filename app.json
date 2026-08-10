@@ -45,7 +45,14 @@
           "microphonePermission": "Kaasu uses the microphone so you can log transactions by voice."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Kaasu uses your photo library so you can set a profile picture."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -2,12 +2,40 @@
  * Money formatting and parsing.
  *
  * Amounts are integer minor units (cents) everywhere in the app; conversion
- * to/from human display happens ONLY here.
- *
- * v1 is single-currency. The symbol will come from `settings` once
- * onboarding exists; until then this default applies.
+ * to/from human display happens ONLY here. Currency is a DISPLAY setting: it
+ * changes the symbol/code only, never the stored integers.
  */
-export const DEFAULT_CURRENCY_SYMBOL = 'Rs';
+
+/** Fixed currency list (Settings picker). Symbols shown before the amount. */
+export const CURRENCIES = [
+  { code: 'LKR', symbol: 'Rs' },
+  { code: 'USD', symbol: '$' },
+  { code: 'EUR', symbol: '€' },
+  { code: 'GBP', symbol: '£' },
+  { code: 'INR', symbol: '₹' },
+  { code: 'AUD', symbol: 'A$' },
+  { code: 'CAD', symbol: 'C$' },
+  { code: 'SGD', symbol: 'S$' },
+  { code: 'AED', symbol: 'AED ' },
+  { code: 'JPY', symbol: '¥' },
+] as const;
+
+export type CurrencyCode = (typeof CURRENCIES)[number]['code'];
+export const DEFAULT_CURRENCY_CODE: CurrencyCode = 'LKR';
+
+export function symbolForCurrency(code: string): string {
+  return CURRENCIES.find((c) => c.code === code)?.symbol ?? `${code} `;
+}
+
+/**
+ * The symbol `formatAmount` uses by default. Set once at startup and whenever
+ * the currency setting changes (see CurrencyContext), so non-component
+ * formatters stay correct without threading the symbol through everywhere.
+ */
+let activeCurrencySymbol = symbolForCurrency(DEFAULT_CURRENCY_CODE);
+export function setActiveCurrencySymbol(symbol: string): void {
+  activeCurrencySymbol = symbol;
+}
 
 /** 125050 → "1,250.50" (no symbol, no sign). */
 export function formatMinorUnits(minor: number): string {
@@ -21,7 +49,7 @@ export function formatMinorUnits(minor: number): string {
 }
 
 /** 125050 → "Rs1,250.50". Sign handling lives in <Amount>, not here. */
-export function formatAmount(minor: number, symbol = DEFAULT_CURRENCY_SYMBOL): string {
+export function formatAmount(minor: number, symbol = activeCurrencySymbol): string {
   return `${symbol}${formatMinorUnits(minor)}`;
 }
 
