@@ -8,6 +8,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,14 +19,23 @@ import {
   View,
 } from 'react-native';
 
-import { AmountInput } from '@/components/AmountInput';
+import { AmountDisplay } from '@/components/AmountDisplay';
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
+import { Keypad } from '@/components/Keypad';
 import { TypeSelector } from '@/components/TypeSelector';
 import { createAccount, listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
 import type { NewTransaction } from '@/db/queries/transactions';
-import { formatMinorUnits, parseAmountInput } from '@/domain/money';
+import {
+  displayMinor,
+  expressionString,
+  initialKeypadState,
+  keypadFromMinor,
+  pressKey,
+  resultMinor,
+  type KeypadKey,
+} from '@/domain/keypad';
 import type {
   Account,
   Category,
@@ -35,7 +45,10 @@ import type {
   TransactionType,
 } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
+import { radius, screenPaddingH, space, type } from '@/theme/tokens';
+
+// Enough scroll clearance so no field hides behind the pinned keypad panel.
+const KEYPAD_CLEARANCE = 360;
 
 const DIRECTION_OPTIONS: { value: LendingDirection; label: string }[] = [
   { value: 'lend', label: 'Lent out' },
@@ -56,8 +69,8 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
 
   const [txType, setTxType] = useState<TransactionType>(initial?.type ?? 'expense');
   const [name, setName] = useState(initial?.name ?? '');
-  const [amountText, setAmountText] = useState(
-    initial ? formatMinorUnits(initial.amountMinor).replace(/,/g, '') : '',
+  const [keypad, setKeypad] = useState(() =>
+    initial ? keypadFromMinor(initial.amountMinor) : initialKeypadState(),
   );
   const [accountId, setAccountId] = useState<string | null>(initial?.accountId ?? null);
   const [toAccountId, setToAccountId] = useState<string | null>(
@@ -77,6 +90,20 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   );
   const [description, setDescription] = useState(initial?.description ?? '');
   const [saving, setSaving] = useState(false);
+  // The amount keypad is pinned to the bottom; while a text field (Name/Note)
+  // has focus the iOS keyboard would cover it, hiding Save. Hide the keypad
+  // then and restore it on dismiss so the form stays usable in both modes.
+  // Only the text fields raise the system keyboard (the amount keypad is plain
+  // Views), so these events map exactly to text-field focus/blur.
+  const [keyboardUp, setKeyboardUp] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardUp(true));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardUp(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<Category[]>([]);
@@ -124,8 +151,8 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   };
 
   const buildTransaction = (): NewTransaction | string => {
-    const amountMinor = parseAmountInput(amountText);
-    if (amountMinor === null) return 'Enter a valid amount.';
+    const amountMinor = resultMinor(keypad);
+    if (amountMinor === null) return 'Enter an amount above zero.';
     if (!name.trim()) return 'Give the transaction a short name.';
     if (!accountId) return 'Pick an account.';
 
@@ -176,15 +203,24 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   const showCategory = txType === 'expense' || txType === 'income';
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={[type.h1, { color: colors.text }]}>{title}</Text>
+    <View style={styles.flex}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.flex}>
+        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+          <Text style={[type.h1, { color: colors.text }]}>{title}</Text>
 
-        <TypeSelector value={txType} onChange={setTxType} />
+          <TypeSelector value={txType} onChange={setTxType} />
 
-        <AmountInput value={amountText} onChange={setAmountText} />
+          {/* Tapping the amount dismisses the text keyboard, bringing the
+              number keypad back into view. */}
+          <Pressable accessibilityRole="button" onPress={Keyboard.dismiss}>
+            <AmountDisplay
+              valueMinor={displayMinor(keypad)}
+              txType={txType}
+              expression={expressionString(keypad)}
+            />
+          </Pressable>
 
         <View style={styles.fieldGroup}>
           <Text style={[type.label, { color: colors.textMuted }]}>Name</Text>
@@ -285,21 +321,20 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
           />
         </View>
 
-        <Pressable
-          accessibilityRole="button"
-          disabled={saving}
-          onPress={save}
-          style={({ pressed }) => [
-            styles.saveButton,
-            { backgroundColor: pressed ? colors.primaryPress : colors.primary },
-            saving && styles.disabled,
-          ]}>
-          <Text style={[type.h2, { color: colors.onPrimary }]}>
-            {saving ? 'Saving…' : submitLabel}
-          </Text>
-        </Pressable>
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+
+      {/* Hidden while a text field is focused so the iOS keyboard can take the
+          bottom; it returns (with Save) once the keyboard is dismissed. */}
+      {keyboardUp ? null : (
+        <Keypad
+          onKey={(k: KeypadKey) => setKeypad((s) => pressKey(s, k))}
+          onSave={save}
+          saveLabel={submitLabel}
+          saving={saving}
+        />
+      )}
+    </View>
   );
 }
 
@@ -307,7 +342,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: {
     paddingHorizontal: screenPaddingH,
-    paddingBottom: space.xxl,
+    paddingBottom: KEYPAD_CLEARANCE,
     gap: space.xl,
   },
   fieldGroup: { gap: space.sm },
@@ -319,11 +354,4 @@ const styles = StyleSheet.create({
   },
   multiline: { minHeight: 64, textAlignVertical: 'top' },
   pickerRow: { alignItems: 'flex-start' },
-  saveButton: {
-    minHeight: minTouchTarget + space.sm,
-    borderRadius: radius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  disabled: { opacity: 0.6 },
 });

@@ -21,6 +21,9 @@ import type { ConfidenceFlag } from '@/domain/types';
 const AUDIO_MIME = 'audio/mp4';
 
 export interface VoiceResult {
+  /** The inserted pending transaction's id — lets the capture screen render
+   *  the logged row and offer "Approve now". */
+  id: string;
   name: string;
   flags: ConfidenceFlag[];
 }
@@ -86,6 +89,6 @@ export async function logVoiceTransaction(audioUri: string): Promise<VoiceResult
     personId = person.id;
   }
 
-  await insertTransaction(assemble(draft, personId));
-  return { name: draft.name, flags: draft.confidenceFlags };
+  const inserted = await insertTransaction(assemble(draft, personId));
+  return { id: inserted.id, name: draft.name, flags: draft.confidenceFlags };
 }

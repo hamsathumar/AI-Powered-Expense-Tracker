@@ -49,6 +49,17 @@ export const lightColors = {
   // Feedback
   success:      '#1E9557',
   danger:       '#D1462F',
+
+  // Accent legible on the brown Home canopy (design-system-v2.md §5.2 spend
+  // bar). Brighter than `lending` so gold reads on the primary surface.
+  canopyAccent: '#F0B84E',
+
+  // Filled positive-action button (queue Approve pill, voice "Approve now").
+  // Deep green + white content, deliberately identical in both themes so white
+  // stays legible on the fill (design-system-v2.md §5.6). `onFilled` is the
+  // content colour for any filled semantic control.
+  positiveFill: '#1E9557',
+  onFilled:     '#FFFFFF',
 } as const;
 
 export const darkColors: ThemeColors = {
@@ -78,6 +89,10 @@ export const darkColors: ThemeColors = {
 
   success:      '#55D08C',
   danger:       '#FF8266',
+
+  canopyAccent: '#F0B84E',
+  positiveFill: '#1E9557',
+  onFilled:     '#FFFFFF',
 };
 
 export type ThemeColors = { [K in keyof typeof lightColors]: string };
@@ -124,6 +139,48 @@ export const shadow = {
   shadowOffset: { width: 0, height: 4 },
 } as const;
 
+/** Upward-cast elevation for the pinned keypad panel (design-system-v2.md §4.1)
+ *  — it needs to read as floating above the form. */
+export const keypadShadow = {
+  shadowColor: '#7A4A34',
+  shadowOpacity: 0.08,
+  shadowRadius: 24,
+  shadowOffset: { width: 0, height: -8 },
+} as const;
+
+// ---------------------------------------------------------------------------
+// Measured layout constants (design-system-v2.md §4.2)
+// Read every screen measurement from here; never hardcode a size in a
+// component. `space`/`radius` above remain the primitive scale.
+// ---------------------------------------------------------------------------
+
+export const layout = {
+  screenPaddingH: 16,
+  canopyPaddingH: 24, // the brown Home header is inset 24, not 16
+  sheetRadius: 24, // content sheet over the canopy
+  sheetOverlap: 22, // sheet pulls up over the canopy by this much
+  cardRadius: 16,
+  heroCardRadius: 20, // detail-screen amount card, donut card
+  rowRadius: 12, // transaction rows, list rows
+  iconTile: { size: 40, radius: 12 }, // row icon squares
+  iconTileSm: { size: 36, radius: 8 }, // dense list rows
+  quickActionTile: { size: 46, radius: 14 },
+  chipPaddingV: 9,
+  chipPaddingH: 16,
+  pendingEdge: 4, // amber left edge on queue cards
+  accountEdge: 4, // type-coloured left edge on account cards
+  primaryButtonH: 54,
+  voiceBarH: 56,
+  fabSm: 56,
+  keypadKeyH: 50,
+  tabBarPaddingBottom: 22, // above the home indicator
+} as const;
+
+/** Bottom-anchored content clearance (design-system-v2.md §4.3): any scroll
+ *  view under the voice bar / a FAB needs at least this much bottom spacer so
+ *  nothing scrolls beneath a floating control. */
+export const bottomClearance = { home: 200, accounts: 190 } as const;
+
 // ---------------------------------------------------------------------------
 // Typography (design-system.md §3)
 // Weight is baked into the loaded font-family name, so styles set fontFamily
@@ -160,4 +217,16 @@ export const type = {
   label:     { fontFamily: fontFamily.medium, fontSize: 13, lineHeight: 18 },
   /** Timestamps, metadata */
   caption:   { fontFamily: fontFamily.body, fontSize: 12, lineHeight: 16 },
+
+  // --- Added in v2 (design-system-v2.md §3) ---
+  /** Amount display on the transaction form */
+  amountInput:      { fontFamily: fontFamily.headingBold, fontSize: 40, lineHeight: 48, ...tabularNums },
+  /** Cents on that display — colour applied at usage: always `textMuted`,
+   *  never a tint of the semantic hue (design-system-v2.md §2.7). */
+  amountInputCents: { fontFamily: fontFamily.headingBold, fontSize: 26, ...tabularNums },
+  /** Keypad digits */
+  keypadKey:        { fontFamily: fontFamily.heading, fontSize: 20 },
+  /** Day headers and eyebrow labels — uppercase, tracked; colour `textSubtle`
+   *  applied at usage. */
+  sectionLabel:     { fontFamily: fontFamily.medium, fontSize: 13, lineHeight: 18, letterSpacing: 0.8, textTransform: 'uppercase' },
 } as const satisfies Record<string, TextStyle>;

@@ -1,16 +1,17 @@
 import { Feather } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
-import type { ColorValue } from 'react-native';
+import { StyleSheet, type ColorValue } from 'react-native';
 
 import { useTheme } from '@/theme/ThemeContext';
-import { type as typeScale } from '@/theme/tokens';
+import { fontFamily } from '@/theme/tokens';
 
 type FeatherIconName = ComponentProps<typeof Feather>['name'];
 
+// Fixed 22pt icons across tabs (design-system-v2.md §6).
 function tabIcon(name: FeatherIconName) {
-  return function TabIcon({ color, size }: { color: ColorValue; size: number }) {
-    return <Feather name={name} color={color} size={size} />;
+  return function TabIcon({ color }: { color: ColorValue; size: number }) {
+    return <Feather name={name} color={color} size={22} />;
   };
 }
 
@@ -34,8 +35,10 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          paddingTop: 8,
         },
-        tabBarLabelStyle: { fontFamily: typeScale.caption.fontFamily },
+        tabBarLabelStyle: { fontFamily: fontFamily.medium, fontSize: 12 },
       }}>
       <Tabs.Screen name="index" options={{ title: 'Home', tabBarIcon: tabIcon('home') }} />
       <Tabs.Screen

@@ -11,7 +11,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { PressableScale } from '@/components/PressableScale';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, space, type } from '@/theme/tokens';
+import { layout, minTouchTarget, space, type } from '@/theme/tokens';
 
 interface Action {
   href: Href;
@@ -40,8 +40,9 @@ export function QuickActions() {
           onPress={() => router.push(action.href)}
           scaleTo={0.93}
           style={styles.tile}>
-          <View style={[styles.iconBox, { backgroundColor: colors.primarySoft }]}>
-            <Feather name={action.icon} size={20} color={colors.primary} />
+          <View
+            style={[styles.iconBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Feather name={action.icon} size={19} color={colors.primary} />
           </View>
           <Text numberOfLines={1} style={[type.caption, { color: colors.textMuted }]}>
             {action.label}
@@ -60,13 +61,14 @@ const styles = StyleSheet.create({
   tile: {
     flex: 1,
     alignItems: 'center',
-    gap: space.xs,
+    gap: space.sm - 2,
     minHeight: minTouchTarget,
   },
   iconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: radius.md,
+    width: layout.quickActionTile.size,
+    height: layout.quickActionTile.size,
+    borderRadius: layout.quickActionTile.radius,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -1,82 +1,95 @@
 /**
- * Home — the daily surface: balance hero, quick-actions to the secondary
- * screens, and the Approval Queue embedded directly (grouped by day, with
- * Approve/Edit/Reject + Approve all). The manual-add and voice FABs float
- * bottom-right as a pair. Recent transactions now live on the Accounts tab.
+ * Home (design-system-v2.md §6) — the daily surface, top to bottom:
+ * balance canopy → quick-action row → To review (approval queue) → Spending
+ * this month → Coming up → bottom spacer. The Hold-to-speak bar + `+` circle
+ * float above the tab bar. All figures are approved-only; pending items live
+ * in the queue and never enter headline totals.
  */
 import { Feather } from '@expo/vector-icons';
-import { format, isToday, isYesterday } from 'date-fns';
+import { format } from 'date-fns';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BalanceHero } from '@/components/BalanceHero';
-import { Fab } from '@/components/Fab';
+import { Amount } from '@/components/Amount';
+import { BalanceCanopy } from '@/components/BalanceCanopy';
+import { PressableScale } from '@/components/PressableScale';
 import { QueueItemCard } from '@/components/QueueItemCard';
 import { QuickActions } from '@/components/QuickActions';
+import { SectionHeader } from '@/components/SectionHeader';
+import { VoiceBar } from '@/components/VoiceBar';
 import {
   getMonthlySummary,
+  getSpendingByCategory,
   getTotalBalanceMinor,
   monthKey,
+  type CategorySpending,
   type MonthlySummary,
 } from '@/db/queries/reports';
+import { listPeopleWithNetBalances, type PersonWithNet } from '@/db/queries/people';
+import { listTemplates } from '@/db/queries/recurring';
 import {
   approveAllPending,
   listPendingTransactionItems,
   setTransactionStatus,
   type TransactionListItem,
 } from '@/db/queries/transactions';
+import type { RecurringTemplate } from '@/domain/types';
 import { usePendingCount } from '@/state/PendingCount';
+import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
+import {
+  bottomClearance,
+  categoryPalette,
+  fontFamily,
+  layout,
+  radius,
+  space,
+  tabularNums,
+  type,
+} from '@/theme/tokens';
+import { formatAmount } from '@/domain/money';
 
-function dayTitle(iso: string): string {
-  const date = new Date(iso);
-  if (isToday(date)) return 'Today';
-  if (isYesterday(date)) return 'Yesterday';
-  return format(date, 'EEE d MMM yyyy');
-}
+const HOME_SPENDING_ROWS = 4;
+const smallAmount = { fontSize: 15, lineHeight: 20 };
 
 export default function HomeScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const router = useRouter();
+  const { symbol } = useCurrency();
   const { refresh: refreshBadge } = usePendingCount();
 
   const [pending, setPending] = useState<TransactionListItem[]>([]);
   const [totalMinor, setTotalMinor] = useState(0);
   const [summary, setSummary] = useState<MonthlySummary>({ incomeMinor: 0, expenseMinor: 0 });
+  const [spending, setSpending] = useState<CategorySpending[]>([]);
+  const [templates, setTemplates] = useState<RecurringTemplate[]>([]);
+  const [owed, setOwed] = useState<PersonWithNet[]>([]);
 
   const reload = useCallback(() => {
+    const month = monthKey(new Date());
     Promise.all([
       listPendingTransactionItems(),
       getTotalBalanceMinor(),
-      getMonthlySummary(monthKey(new Date())),
+      getMonthlySummary(month),
+      getSpendingByCategory(month),
+      listTemplates(),
+      listPeopleWithNetBalances(),
     ])
-      .then(([pendingItems, total, monthSummary]) => {
+      .then(([pendingItems, total, monthSummary, byCategory, allTemplates, people]) => {
         setPending(pendingItems);
         setTotalMinor(total);
         setSummary(monthSummary);
+        setSpending(byCategory);
+        setTemplates(allTemplates);
+        setOwed(people.filter((p) => p.netMinor > 0));
       })
       .catch((e) => Alert.alert('Database error', String(e)));
     refreshBadge();
   }, [refreshBadge]);
 
   useFocusEffect(reload);
-
-  const sections = useMemo(() => {
-    const byDay = new Map<string, TransactionListItem[]>();
-    for (const item of pending) {
-      const key = format(new Date(item.tx.occurredAt), 'yyyy-MM-dd');
-      byDay.set(key, [...(byDay.get(key) ?? []), item]);
-    }
-    return [...byDay.entries()].map(([key, data]) => ({
-      key,
-      title: dayTitle(data[0]!.tx.occurredAt),
-      data,
-    }));
-  }, [pending]);
 
   const act = (id: string, status: 'approved' | 'rejected') => {
     setTransactionStatus(id, status).then(reload);
@@ -89,126 +102,288 @@ export default function HomeScreen() {
     ]);
   };
 
-  return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <SectionList
-        sections={sections}
-        keyExtractor={(item) => item.tx.id}
-        contentContainerStyle={styles.list}
-        stickySectionHeadersEnabled={false}
-        ListHeaderComponent={
-          <View style={styles.headerBlock}>
-            <Text style={[type.h1, { color: colors.text }]}>Kaasu</Text>
-            <BalanceHero
-              totalBalanceMinor={totalMinor}
-              monthIncomeMinor={summary.incomeMinor}
-              monthExpenseMinor={summary.expenseMinor}
-              pendingCount={pending.length}
-            />
-            <QuickActions />
-            <View style={styles.queueHeading}>
-              <Text style={[type.h2, { color: colors.text }]}>
-                Queue{pending.length > 0 ? ` (${pending.length})` : ''}
-              </Text>
-              {pending.length > 1 ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={bulkApprove}
-                  style={[styles.bulkButton, { backgroundColor: colors.primarySoft }]}>
-                  <Text style={[type.label, { color: colors.primary }]}>Approve all</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-        }
-        renderSectionHeader={({ section }) => (
-          <Text style={[type.label, styles.sectionTitle, { color: colors.textMuted }]}>
-            {section.title}
-          </Text>
-        )}
-        renderItem={({ item }) => (
-          // Approving/rejecting removes the row — it fades and the rest slide
-          // up to fill the gap (design §7).
-          <Animated.View
-            entering={FadeIn.duration(200)}
-            exiting={FadeOut.duration(200)}
-            layout={LinearTransition.duration(220)}>
-            <QueueItemCard
-              item={item}
-              onApprove={() => act(item.tx.id, 'approved')}
-              onReject={() => act(item.tx.id, 'rejected')}
-              onEdit={() => router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })}
-            />
-          </Animated.View>
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Feather name="inbox" size={28} color={colors.textSubtle} />
-            <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-              Queue is clear — tap the mic or + to add something.
-            </Text>
-          </View>
-        }
-      />
+  // Top categories + a taupe "Everything else" overflow row (v2 §2.9).
+  const spendRows = useMemo(() => {
+    const rows = spending.slice(0, HOME_SPENDING_ROWS).map((c, i) => ({
+      key: c.categoryId,
+      name: c.name,
+      icon: (c.icon ?? 'tag') as ComponentIcon,
+      color: c.color ?? categoryPalette[i % categoryPalette.length]!,
+      totalMinor: c.totalMinor,
+    }));
+    const restMinor = spending
+      .slice(HOME_SPENDING_ROWS)
+      .reduce((sum, c) => sum + c.totalMinor, 0);
+    if (restMinor > 0) {
+      rows.push({
+        key: '__else__',
+        name: 'Everything else',
+        icon: 'more-horizontal',
+        color: categoryPalette[categoryPalette.length - 1]!, // warm taupe
+        totalMinor: restMinor,
+      });
+    }
+    return rows;
+  }, [spending]);
 
-      {/* Manual add (top) + voice (bottom) as a related pair, one-handed
-          reachable above the tab bar (design §5.5 / §4.1). */}
-      <View style={styles.fabStack}>
-        <Fab
-          icon="plus"
-          size={52}
-          accessibilityLabel="Add transaction"
-          onPress={() => router.push('/transaction/new')}
+  const upcoming = useMemo(
+    () =>
+      templates
+        .filter((t) => t.active)
+        .sort((a, b) => a.nextDueDate.localeCompare(b.nextDueDate))
+        .slice(0, 2),
+    [templates],
+  );
+  const owedTop = useMemo(() => [...owed].sort((a, b) => b.netMinor - a.netMinor).slice(0, 2), [owed]);
+  const hasComingUp = upcoming.length > 0 || owedTop.length > 0;
+
+  const badgeText = isDark ? colors.bg : colors.onPrimary;
+
+  return (
+    <View style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.primary }]}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <BalanceCanopy
+          monthLabel={format(new Date(), 'MMMM')}
+          totalBalanceMinor={totalMinor}
+          monthIncomeMinor={summary.incomeMinor}
+          monthExpenseMinor={summary.expenseMinor}
+          pendingCount={pending.length}
         />
-        <Fab
-          icon="mic"
-          size={60}
-          accessibilityLabel="Log by voice"
-          onPress={() => router.push('/voice')}
+
+        <View style={[styles.sheet, { backgroundColor: colors.bg }]}>
+          <QuickActions />
+
+          {/* To review — the approval queue */}
+          <View style={styles.section}>
+            <SectionHeader
+              title="To review"
+              right={
+                <View style={styles.headerRight}>
+                  {pending.length > 0 ? (
+                    <View style={[styles.badge, { backgroundColor: colors.warning }]}>
+                      <Text style={[styles.badgeLabel, { color: badgeText }]}>{pending.length}</Text>
+                    </View>
+                  ) : null}
+                  {pending.length > 1 ? (
+                    <Pressable accessibilityRole="button" onPress={bulkApprove} hitSlop={space.sm}>
+                      <Text style={[type.label, { color: colors.primary }]}>Approve all</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              }
+            />
+            {pending.length === 0 ? (
+              <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Feather name="check-circle" size={22} color={colors.textSubtle} />
+                <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
+                  Queue is clear — hold to speak, or tap + to add something.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.queueList}>
+                {pending.map((item) => (
+                  <Animated.View
+                    key={item.tx.id}
+                    entering={FadeIn.duration(200)}
+                    exiting={FadeOut.duration(200)}
+                    layout={LinearTransition.duration(220)}>
+                    <QueueItemCard
+                      item={item}
+                      onApprove={() => act(item.tx.id, 'approved')}
+                      onReject={() => act(item.tx.id, 'rejected')}
+                      onEdit={() =>
+                        router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })
+                      }
+                    />
+                  </Animated.View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Spending this month */}
+          {spendRows.length > 0 ? (
+            <View style={styles.section}>
+              <SectionHeader
+                title="Spending this month"
+                right={
+                  <Amount
+                    valueMinor={summary.expenseMinor}
+                    textStyle={{ ...type.amount, ...smallAmount }}
+                    colorOverride={colors.textMuted}
+                  />
+                }
+              />
+              <View style={styles.spendList}>
+                {spendRows.map((row) => {
+                  const pct =
+                    summary.expenseMinor > 0
+                      ? Math.round((row.totalMinor / summary.expenseMinor) * 100)
+                      : 0;
+                  return (
+                    <View key={row.key} style={styles.spendRow}>
+                      <View style={styles.spendTop}>
+                        <Feather name={row.icon} size={14} color={row.color} />
+                        <Text style={[type.body, styles.spendName, { color: colors.text }]} numberOfLines={1}>
+                          {row.name}
+                        </Text>
+                        <Text style={[type.caption, styles.pct, { color: colors.textMuted }]}>{pct}%</Text>
+                        <Amount
+                          valueMinor={row.totalMinor}
+                          textStyle={{ ...type.amount, ...smallAmount }}
+                          colorOverride={colors.text}
+                        />
+                      </View>
+                      <View style={[styles.track, { backgroundColor: colors.surfaceAlt }]}>
+                        <View style={[styles.fill, { backgroundColor: row.color, width: `${pct}%` }]} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+
+          {/* Coming up — next recurring + who owes you */}
+          {hasComingUp ? (
+            <View style={styles.section}>
+              <SectionHeader title="Coming up" />
+              <View style={styles.comingList}>
+                {upcoming.map((t) => (
+                  <PressableScale
+                    key={t.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t.name}, recurring`}
+                    onPress={() => router.push({ pathname: '/recurring/[id]', params: { id: t.id } })}
+                    scaleTo={0.98}
+                    style={[styles.comingRow, { backgroundColor: colors.surface }]}>
+                    <View style={[styles.comingTile, { backgroundColor: colors.primarySoft }]}>
+                      <Feather name="repeat" size={18} color={colors.primary} />
+                    </View>
+                    <View style={styles.comingText}>
+                      <Text style={[type.body, { color: colors.text }]} numberOfLines={1}>
+                        {t.name}
+                      </Text>
+                      <Text style={[type.caption, { color: colors.textMuted }]}>
+                        Recurring · due {format(new Date(t.nextDueDate), 'd MMM')}
+                      </Text>
+                    </View>
+                    <Amount
+                      valueMinor={t.amountMinor}
+                      textStyle={{ ...type.amount, ...smallAmount }}
+                      colorOverride={colors.text}
+                    />
+                  </PressableScale>
+                ))}
+                {owedTop.map(({ person, netMinor }) => (
+                  <PressableScale
+                    key={person.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${person.name} owes you`}
+                    onPress={() => router.push({ pathname: '/person/[id]', params: { id: person.id } })}
+                    scaleTo={0.98}
+                    style={[styles.comingRow, { backgroundColor: colors.surface }]}>
+                    <View style={[styles.avatar, { backgroundColor: colors.primarySoft }]}>
+                      <Text style={[styles.avatarText, { color: colors.primary }]}>
+                        {person.name.slice(0, 1).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.comingText}>
+                      <Text style={[type.body, { color: colors.text }]} numberOfLines={1}>
+                        {person.name}
+                      </Text>
+                      <Text style={[type.caption, { color: colors.textMuted }]}>Tap to settle up</Text>
+                    </View>
+                    <Text style={[type.amount, smallAmount, { color: colors.lending }]}>
+                      Owes you {formatAmount(netMinor, symbol)}
+                    </Text>
+                  </PressableScale>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          <View style={{ height: bottomClearance.home }} />
+        </View>
+      </ScrollView>
+
+      <View style={styles.voiceBar}>
+        <VoiceBar
+          onSpeak={() => router.push('/voice')}
+          onAdd={() => router.push('/transaction/new')}
         />
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
+type ComponentIcon = React.ComponentProps<typeof Feather>['name'];
+
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  list: {
-    paddingHorizontal: screenPaddingH,
-    paddingBottom: space.xxl * 3,
-    gap: space.sm,
+  root: { flex: 1 },
+  scroll: { paddingBottom: 0 },
+  sheet: {
+    marginTop: -layout.sheetOverlap,
+    borderTopLeftRadius: layout.sheetRadius,
+    borderTopRightRadius: layout.sheetRadius,
+    paddingTop: space.xl,
+    paddingHorizontal: layout.screenPaddingH,
+    gap: space.xl,
   },
-  headerBlock: {
-    gap: space.lg,
-    paddingTop: space.md,
-    marginBottom: space.sm,
-  },
-  queueHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  bulkButton: {
-    minHeight: minTouchTarget - space.sm,
+  section: { gap: space.md },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  badge: {
     borderRadius: radius.pill,
-    paddingHorizontal: space.lg,
-    justifyContent: 'center',
+    paddingHorizontal: space.sm,
+    paddingVertical: 1,
+    minWidth: 20,
+    alignItems: 'center',
   },
-  sectionTitle: {
-    marginTop: space.md,
-    marginBottom: space.xs,
-  },
-  empty: {
+  badgeLabel: { fontFamily: fontFamily.heading, fontSize: 12 },
+  queueList: { gap: space.md - 2 },
+  emptyCard: {
+    borderRadius: layout.cardRadius,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: space.xl,
     alignItems: 'center',
     gap: space.md,
-    paddingTop: space.xl,
   },
   emptyText: { textAlign: 'center' },
-  fabStack: {
-    position: 'absolute',
-    right: screenPaddingH,
-    bottom: space.xl,
+  spendList: { gap: space.md + 2 },
+  spendRow: { gap: space.sm - 2 },
+  spendTop: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  spendName: { flex: 1 },
+  pct: { ...tabularNums },
+  track: { height: 8, borderRadius: radius.pill, overflow: 'hidden' },
+  fill: { height: '100%', borderRadius: radius.pill },
+  comingList: { gap: space.sm + 2 },
+  comingRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
+    borderRadius: layout.cardRadius,
+    padding: space.md + 2,
+  },
+  comingTile: {
+    width: layout.iconTile.size,
+    height: layout.iconTile.size,
+    borderRadius: layout.iconTile.radius,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatar: {
+    width: layout.iconTile.size,
+    height: layout.iconTile.size,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { fontFamily: fontFamily.heading, fontSize: 15 },
+  comingText: { flex: 1, gap: 2 },
+  voiceBar: {
+    position: 'absolute',
+    left: layout.screenPaddingH,
+    right: layout.screenPaddingH,
+    bottom: space.md,
   },
 });
