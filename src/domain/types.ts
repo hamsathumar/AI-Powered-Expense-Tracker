@@ -122,6 +122,19 @@ export type TransactionType = Transaction['type'];
 export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'custom';
 
 /**
+ * Three-state lifecycle for a template. `paused` templates skip generation
+ * but keep their schedule; `cancelled` is a soft-delete that survives so its
+ * generated transactions keep their link. Replaces the old `active` boolean.
+ */
+export type RecurringStatus = 'active' | 'paused' | 'cancelled';
+
+/**
+ * Meta grouping for the summary bar — orthogonal to `categoryId` (which still
+ * drives reports/colours). A subscription can point at any category.
+ */
+export type RecurringGroup = 'subscription' | 'bill' | 'rent' | 'loan' | 'other';
+
+/**
  * Stored transaction shape minus date/status, plus a schedule (spec §5).
  * Field validity per type mirrors the Transaction union but is checked at
  * generation time (templates are stored flat).
@@ -142,6 +155,15 @@ export interface RecurringTemplate {
   /** 'yyyy-MM-dd' local date. */
   nextDueDate: string;
   endDate?: string;
+  status: RecurringStatus;
+  /** 'yyyy-MM-dd' — a paused template auto-resumes on/after this date. */
+  pausedUntil?: string;
+  recurringGroup: RecurringGroup;
+  /** Loans only: fixed number of installments. */
+  totalInstallments?: number;
+  /** Loans only: original principal in integer minor units. */
+  principalMinor?: number;
+  /** Derived convenience (= status === 'active'); kept for existing callers. */
   active: boolean;
   createdAt: string;
 }

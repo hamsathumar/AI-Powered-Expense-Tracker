@@ -282,6 +282,23 @@ export async function listRecentTransactionItems(limit = 50): Promise<Transactio
   return rows.map(toListItem);
 }
 
+/**
+ * Approved transactions that occurred on the given local calendar day (any
+ * type). Powers Home's "Today" section. `dayISO` is a local 'yyyy-MM-dd'; the
+ * `'localtime'` modifier matches the day-grouping convention used across
+ * reports so late-evening entries land on the right day.
+ */
+export async function listApprovedItemsForDay(dayISO: string): Promise<TransactionListItem[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<JoinedRow>(
+    `${JOINED_SELECT}
+     WHERE t.status = 'approved' AND date(t.occurred_at, 'localtime') = date(?)
+     ORDER BY t.occurred_at DESC`,
+    dayISO,
+  );
+  return rows.map(toListItem);
+}
+
 /** Full history involving one person: lending plus tagged expense/income. */
 export async function listTransactionItemsForPerson(
   personId: string,

@@ -18,6 +18,7 @@ import { PressableScale } from '@/components/PressableScale';
 import { QueueItemCard } from '@/components/QueueItemCard';
 import { QuickActions } from '@/components/QuickActions';
 import { SectionHeader } from '@/components/SectionHeader';
+import { TransactionRow } from '@/components/TransactionRow';
 import { VoiceBar } from '@/components/VoiceBar';
 import {
   getMonthlySummary,
@@ -31,6 +32,7 @@ import { listPeopleWithNetBalances, type PersonWithNet } from '@/db/queries/peop
 import { listTemplates } from '@/db/queries/recurring';
 import {
   approveAllPending,
+  listApprovedItemsForDay,
   listPendingTransactionItems,
   setTransactionStatus,
   type TransactionListItem,
@@ -61,6 +63,7 @@ export default function HomeScreen() {
   const { refresh: refreshBadge } = usePendingCount();
 
   const [pending, setPending] = useState<TransactionListItem[]>([]);
+  const [todayItems, setTodayItems] = useState<TransactionListItem[]>([]);
   const [totalMinor, setTotalMinor] = useState(0);
   const [summary, setSummary] = useState<MonthlySummary>({ incomeMinor: 0, expenseMinor: 0 });
   const [spending, setSpending] = useState<CategorySpending[]>([]);
@@ -69,6 +72,7 @@ export default function HomeScreen() {
 
   const reload = useCallback(() => {
     const month = monthKey(new Date());
+    const day = format(new Date(), 'yyyy-MM-dd');
     Promise.all([
       listPendingTransactionItems(),
       getTotalBalanceMinor(),
@@ -76,14 +80,16 @@ export default function HomeScreen() {
       getSpendingByCategory(month),
       listTemplates(),
       listPeopleWithNetBalances(),
+      listApprovedItemsForDay(day),
     ])
-      .then(([pendingItems, total, monthSummary, byCategory, allTemplates, people]) => {
+      .then(([pendingItems, total, monthSummary, byCategory, allTemplates, people, todaysItems]) => {
         setPending(pendingItems);
         setTotalMinor(total);
         setSummary(monthSummary);
         setSpending(byCategory);
         setTemplates(allTemplates);
         setOwed(people.filter((p) => p.netMinor > 0));
+        setTodayItems(todaysItems);
       })
       .catch((e) => Alert.alert('Database error', String(e)));
     refreshBadge();
@@ -196,6 +202,25 @@ export default function HomeScreen() {
                       }
                     />
                   </Animated.View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Today — approved transactions logged today (any type) */}
+          <View style={styles.section}>
+            <SectionHeader title="Today" />
+            {todayItems.length === 0 ? (
+              <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Feather name="sunrise" size={22} color={colors.textSubtle} />
+                <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
+                  Nothing logged today yet — approved transactions land here as they happen.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.todayList}>
+                {todayItems.map((item) => (
+                  <TransactionRow key={item.tx.id} item={item} />
                 ))}
               </View>
             )}
@@ -349,6 +374,7 @@ const styles = StyleSheet.create({
     gap: space.md,
   },
   emptyText: { textAlign: 'center' },
+  todayList: { gap: space.sm },
   spendList: { gap: space.md + 2 },
   spendRow: { gap: space.sm - 2 },
   spendTop: { flexDirection: 'row', alignItems: 'center', gap: space.sm },

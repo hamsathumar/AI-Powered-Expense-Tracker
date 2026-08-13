@@ -117,6 +117,20 @@ export const categoryPalette = [
   '#9C7A5A', // warm taupe
 ] as const;
 
+/**
+ * Recurring-group segment colours (recurring redesign — Feature 4). A fixed,
+ * theme-independent mapping drawn from the category palette so the summary bar
+ * reads consistently in both themes. Each segment is ALWAYS paired with its
+ * legend label — never colour-alone. `other` is a neutral taupe.
+ */
+export const recurringGroupColors = {
+  subscription: '#7B5AD6', // violet
+  bill:         '#2E93D9', // sky blue
+  rent:         '#9C7A5A', // warm taupe
+  loan:         '#EE7D30', // orange
+  other:        '#A2958B', // neutral
+} as const;
+
 // ---------------------------------------------------------------------------
 // Layout (design-system.md §4) — base unit 4px
 // ---------------------------------------------------------------------------

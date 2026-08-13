@@ -26,12 +26,14 @@ import { listCategories } from '@/db/queries/categories';
 import { listPeople } from '@/db/queries/people';
 import type { NewRecurringTemplate } from '@/db/queries/recurring';
 import { formatMinorUnits, parseAmountInput } from '@/domain/money';
+import { GROUP_OPTIONS } from '@/domain/recurringDisplay';
 import type {
   Account,
   Category,
   LendingDirection,
   Person,
   RecurringFrequency,
+  RecurringGroup,
   RecurringTemplate,
   TransactionType,
 } from '@/domain/types';
@@ -72,6 +74,13 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
   const [categoryId, setCategoryId] = useState<string | null>(initial?.categoryId ?? null);
   const [personId, setPersonId] = useState<string | null>(initial?.personId ?? null);
   const [direction, setDirection] = useState<LendingDirection>(initial?.direction ?? 'lend');
+  const [group, setGroup] = useState<RecurringGroup>(initial?.recurringGroup ?? 'other');
+  const [installmentsText, setInstallmentsText] = useState(
+    initial?.totalInstallments ? String(initial.totalInstallments) : '',
+  );
+  const [principalText, setPrincipalText] = useState(
+    initial?.principalMinor ? formatMinorUnits(initial.principalMinor).replace(/,/g, '') : '',
+  );
   const [frequency, setFrequency] = useState<RecurringFrequency>(initial?.frequency ?? 'monthly');
   const [intervalText, setIntervalText] = useState(
     initial?.intervalDays ? String(initial.intervalDays) : '',
@@ -111,6 +120,10 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
   const categories = txType === 'income' ? incomeCategories : expenseCategories;
   const accountChips: ChipItem[] = accounts.map((a) => ({ id: a.id, label: a.name }));
   const showCategory = txType === 'expense' || txType === 'income';
+  // Group taxonomy + loan tracking apply to expenses only (spec Features 4–5);
+  // income/transfer/lending templates stay in the neutral 'other' group.
+  const showGroup = txType === 'expense';
+  const showLoanFields = showGroup && group === 'loan';
 
   const save = async () => {
     const amountMinor = parseAmountInput(amountText);
@@ -125,6 +138,24 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
     const intervalDays = frequency === 'custom' ? Number(intervalText) : undefined;
     if (frequency === 'custom' && (!Number.isInteger(intervalDays) || intervalDays! < 1)) {
       return Alert.alert('Not quite', 'Enter the interval in days (a whole number ≥ 1).');
+    }
+
+    // Loan tracking is optional; if the user typed values, they must be valid.
+    let totalInstallments: number | undefined;
+    let principalMinor: number | undefined;
+    if (showLoanFields) {
+      if (installmentsText.trim()) {
+        const n = Number(installmentsText);
+        if (!Number.isInteger(n) || n < 1) {
+          return Alert.alert('Not quite', 'Installments must be a whole number ≥ 1.');
+        }
+        totalInstallments = n;
+      }
+      if (principalText.trim()) {
+        const p = parseAmountInput(principalText);
+        if (p === null) return Alert.alert('Not quite', 'Enter a valid loan amount.');
+        principalMinor = p;
+      }
     }
 
     setSaving(true);
@@ -142,7 +173,12 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
         intervalDays,
         nextDueDate: format(nextDue, 'yyyy-MM-dd'),
         endDate: hasEndDate ? format(endDate, 'yyyy-MM-dd') : undefined,
-        active: initial?.active ?? true,
+        // Preserve the lifecycle state on edit; new templates start active.
+        status: initial?.status ?? 'active',
+        pausedUntil: initial?.pausedUntil,
+        recurringGroup: showGroup ? group : 'other',
+        totalInstallments,
+        principalMinor,
       });
     } catch (e) {
       Alert.alert('Save failed', String(e));
@@ -213,6 +249,54 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
           />
         ) : null}
 
+        {showGroup ? (
+          <ChipSelector
+            label="Group"
+            items={GROUP_OPTIONS}
+            selectedId={group}
+            onSelect={(id) => setGroup(id as RecurringGroup)}
+          />
+        ) : null}
+
+        {showLoanFields ? (
+          <View style={styles.fieldGroup}>
+            <Text style={[type.label, { color: colors.textMuted }]}>
+              Loan amount (optional)
+            </Text>
+            <TextInput
+              value={principalText}
+              onChangeText={setPrincipalText}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 2400000"
+              placeholderTextColor={colors.textSubtle}
+              style={[
+                type.body,
+                styles.textField,
+                { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+              ]}
+            />
+            <Text style={[type.label, { color: colors.textMuted }]}>
+              Total installments (optional)
+            </Text>
+            <TextInput
+              value={installmentsText}
+              onChangeText={setInstallmentsText}
+              keyboardType="number-pad"
+              placeholder="e.g. 24"
+              placeholderTextColor={colors.textSubtle}
+              style={[
+                type.body,
+                styles.textField,
+                { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+              ]}
+            />
+            <Text style={[type.caption, { color: colors.textSubtle }]}>
+              We show a progress bar once both are set — how many installments are paid and how
+              much principal is left.
+            </Text>
+          </View>
+        ) : null}
+
         {txType === 'lending' ? (
           <ChipSelector
             label="Direction"
@@ -257,7 +341,9 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
         ) : null}
 
         <View style={styles.fieldGroup}>
-          <Text style={[type.label, { color: colors.textMuted }]}>Next due</Text>
+          <Text style={[type.label, { color: colors.textMuted }]}>
+            {txType === 'income' ? 'Next expected' : 'Next due'}
+          </Text>
           <View style={styles.pickerRow}>
             <DateTimePicker
               value={nextDue}

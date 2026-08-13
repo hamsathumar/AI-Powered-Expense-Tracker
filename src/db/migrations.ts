@@ -123,6 +123,31 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // Recurring redesign: three-state lifecycle (active/paused/cancelled),
+    // a meta group taxonomy for the summary bar, and loan/installment fields.
+    // The legacy `active` INTEGER column is kept in sync on writes so nothing
+    // stale breaks, but `status` is now authoritative.
+    version: 3,
+    up: async (db) => {
+      await db.execAsync(`
+        ALTER TABLE recurring_templates
+          ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active','paused','cancelled'));
+        ALTER TABLE recurring_templates ADD COLUMN paused_until TEXT;
+        ALTER TABLE recurring_templates
+          ADD COLUMN recurring_group TEXT
+          CHECK (recurring_group IN ('subscription','bill','rent','loan','other'));
+        ALTER TABLE recurring_templates ADD COLUMN total_installments INTEGER;
+        ALTER TABLE recurring_templates ADD COLUMN principal_amount INTEGER;
+
+        UPDATE recurring_templates
+          SET status = CASE WHEN active = 1 THEN 'active' ELSE 'cancelled' END;
+        UPDATE recurring_templates
+          SET recurring_group = 'other' WHERE recurring_group IS NULL;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {
