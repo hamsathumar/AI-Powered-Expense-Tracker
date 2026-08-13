@@ -7,29 +7,29 @@
  * it). A trailing pencil edits the account. + Add is a floating button.
  */
 import { Feather } from '@expo/vector-icons';
+import { format, isToday, isYesterday } from 'date-fns';
 import { useFocusEffect, useRouter } from 'expo-router';
-import type { ComponentProps } from 'react';
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Pressable, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Amount } from '@/components/Amount';
+import { AccountCard } from '@/components/AccountCard';
 import { Fab } from '@/components/Fab';
 import { TransactionRow } from '@/components/TransactionRow';
 import { listAccountBalancesMinor, listAccounts } from '@/db/queries/accounts';
 import { listTransactionItems, type TransactionListItem } from '@/db/queries/transactions';
-import type { Account, AccountType } from '@/domain/types';
+import { accountDeltaMinor } from '@/domain/accountActivity';
+import { formatAmount } from '@/domain/money';
+import type { Account } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
+import { minTouchTarget, radius, screenPaddingH, space, tabularNums, type } from '@/theme/tokens';
 
-const TYPE_META: Record<
-  AccountType,
-  { label: string; icon: ComponentProps<typeof Feather>['name']; colorKey: 'accountBank' | 'accountCard' | 'accountCash' }
-> = {
-  bank: { label: 'Bank', icon: 'briefcase', colorKey: 'accountBank' },
-  card: { label: 'Card', icon: 'credit-card', colorKey: 'accountCard' },
-  cash: { label: 'Cash', icon: 'dollar-sign', colorKey: 'accountCash' },
-};
+function dayTitle(iso: string): string {
+  const date = new Date(iso);
+  if (isToday(date)) return `Today · ${format(date, 'd MMM')}`;
+  if (isYesterday(date)) return `Yesterday · ${format(date, 'd MMM')}`;
+  return format(date, 'EEE d MMM yyyy');
+}
 
 export default function AccountsScreen() {
   const { colors } = useTheme();
@@ -66,6 +66,22 @@ export default function AccountsScreen() {
 
   const selectedAccount = accounts.find((a) => a.id === selectedId) ?? null;
 
+  // Group the transaction list by local day, with each day's net cash effect
+  // (v2 §6). Transactions arrive newest-first, so days stay in that order.
+  const sections = useMemo(() => {
+    const byDay = new Map<string, TransactionListItem[]>();
+    for (const item of transactions) {
+      const key = format(new Date(item.tx.occurredAt), 'yyyy-MM-dd');
+      byDay.set(key, [...(byDay.get(key) ?? []), item]);
+    }
+    return [...byDay.entries()].map(([key, data]) => ({
+      key,
+      title: dayTitle(data[0]!.tx.occurredAt),
+      netMinor: data.reduce((sum, i) => sum + accountDeltaMinor(i.tx, selectedId ?? undefined), 0),
+      data,
+    }));
+  }, [transactions, selectedId]);
+
   const header = (
     <View style={styles.headerBlock}>
       <Text style={[type.h1, { color: colors.text }]}>Accounts</Text>
@@ -79,52 +95,16 @@ export default function AccountsScreen() {
         </View>
       ) : (
         <View style={styles.cards}>
-          {accounts.map((item) => {
-            const selected = item.id === selectedId;
-            return (
-              <Pressable
-                key={item.id}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => setSelectedId((prev) => (prev === item.id ? null : item.id))}
-                style={[
-                  styles.row,
-                  {
-                    backgroundColor: selected ? colors.primarySoft : colors.surface,
-                    borderColor: selected ? colors.primary : 'transparent',
-                  },
-                ]}>
-                <View
-                  style={[
-                    styles.iconBox,
-                    { backgroundColor: `${colors[TYPE_META[item.type].colorKey]}22` },
-                  ]}>
-                  <Feather
-                    name={TYPE_META[item.type].icon}
-                    size={18}
-                    color={colors[TYPE_META[item.type].colorKey]}
-                  />
-                </View>
-                <View style={styles.middle}>
-                  <Text numberOfLines={1} style={[type.body, { color: colors.text }]}>
-                    {item.name}
-                  </Text>
-                  <Text style={[type.caption, { color: colors.textMuted }]}>
-                    {TYPE_META[item.type].label}
-                  </Text>
-                </View>
-                <Amount valueMinor={balances.get(item.id) ?? item.openingBalanceMinor} />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Edit ${item.name}`}
-                  hitSlop={space.sm}
-                  onPress={() => router.push({ pathname: '/account/[id]', params: { id: item.id } })}
-                  style={styles.editButton}>
-                  <Feather name="edit-2" size={16} color={colors.textMuted} />
-                </Pressable>
-              </Pressable>
-            );
-          })}
+          {accounts.map((item) => (
+            <AccountCard
+              key={item.id}
+              account={item}
+              balanceMinor={balances.get(item.id) ?? item.openingBalanceMinor}
+              selected={item.id === selectedId}
+              onPress={() => setSelectedId((prev) => (prev === item.id ? null : item.id))}
+              onEdit={() => router.push({ pathname: '/account/[id]', params: { id: item.id } })}
+            />
+          ))}
         </View>
       )}
 
@@ -162,12 +142,30 @@ export default function AccountsScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <FlatList
-        data={transactions}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.tx.id}
         contentContainerStyle={styles.list}
+        stickySectionHeadersEnabled={false}
         ListHeaderComponent={header}
-        renderItem={({ item }) => <TransactionRow item={item} />}
+        renderSectionHeader={({ section }) => (
+          <View style={styles.dayHeader}>
+            <Text style={[type.sectionLabel, { color: colors.textSubtle }]}>{section.title}</Text>
+            <Text style={[styles.dayNet, { color: colors.textMuted }]}>
+              {section.netMinor > 0 ? '+' : section.netMinor < 0 ? '−' : ''}
+              {formatAmount(Math.abs(section.netMinor))}
+            </Text>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              router.push({ pathname: '/transaction/detail/[id]', params: { id: item.tx.id } })
+            }>
+            <TransactionRow item={item} />
+          </Pressable>
+        )}
         ListEmptyComponent={
           accounts.length > 0 ? (
             <Text style={[type.caption, styles.emptyText, { color: colors.textSubtle }]}>
@@ -199,29 +197,14 @@ const styles = StyleSheet.create({
     paddingTop: space.md,
   },
   cards: { gap: space.sm },
-  row: {
+  dayHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    padding: space.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    minHeight: minTouchTarget + space.md,
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingTop: space.lg,
+    paddingBottom: space.sm,
   },
-  iconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  middle: { flex: 1, gap: 2 },
-  editButton: {
-    minWidth: minTouchTarget - space.md,
-    minHeight: minTouchTarget - space.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  dayNet: { fontFamily: type.amount.fontFamily, fontSize: 13, ...tabularNums },
   txHeading: {
     flexDirection: 'row',
     alignItems: 'center',

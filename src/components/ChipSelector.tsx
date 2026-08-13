@@ -8,7 +8,7 @@ import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, space, type } from '@/theme/tokens';
+import { layout, minTouchTarget, radius, space, type } from '@/theme/tokens';
 
 export interface ChipItem {
   id: string;
@@ -80,8 +80,8 @@ export function ChipSelector({
             accessibilityRole="button"
             onPress={onAddNew}
             style={[styles.chip, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Feather name="plus" size={14} color={colors.textMuted} />
-            <Text style={[type.label, { color: colors.textMuted }]}>Add</Text>
+            <Feather name="plus" size={14} color={colors.primary} />
+            <Text style={[type.label, { color: colors.primary }]}>Add</Text>
           </Pressable>
         ) : null}
       </View>
@@ -103,8 +103,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.xs,
     minHeight: Math.max(36, minTouchTarget - space.sm),
-    paddingHorizontal: space.md,
+    paddingVertical: layout.chipPaddingV,
+    paddingHorizontal: layout.chipPaddingH,
     borderRadius: radius.pill,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
 });

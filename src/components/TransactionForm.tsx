@@ -4,7 +4,6 @@
  * discriminated union exactly. The caller decides what happens on submit
  * (insert as pending / update in place).
  */
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -21,6 +20,7 @@ import {
 
 import { AmountDisplay } from '@/components/AmountDisplay';
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
+import { DateTimeField } from '@/components/DateTimeField';
 import { Keypad } from '@/components/Keypad';
 import { TypeSelector } from '@/components/TypeSelector';
 import { createAccount, listAccounts } from '@/db/queries/accounts';
@@ -48,7 +48,7 @@ import { useTheme } from '@/theme/ThemeContext';
 import { radius, screenPaddingH, space, type } from '@/theme/tokens';
 
 // Enough scroll clearance so no field hides behind the pinned keypad panel.
-const KEYPAD_CLEARANCE = 360;
+const KEYPAD_CLEARANCE = 470;
 
 const DIRECTION_OPTIONS: { value: LendingDirection; label: string }[] = [
   { value: 'lend', label: 'Lent out' },
@@ -65,7 +65,7 @@ interface Props {
 }
 
 export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
 
   const [txType, setTxType] = useState<TransactionType>(initial?.type ?? 'expense');
   const [name, setName] = useState(initial?.name ?? '');
@@ -90,20 +90,27 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   );
   const [description, setDescription] = useState(initial?.description ?? '');
   const [saving, setSaving] = useState(false);
-  // The amount keypad is pinned to the bottom; while a text field (Name/Note)
-  // has focus the iOS keyboard would cover it, hiding Save. Hide the keypad
-  // then and restore it on dismiss so the form stays usable in both modes.
-  // Only the text fields raise the system keyboard (the amount keypad is plain
-  // Views), so these events map exactly to text-field focus/blur.
-  const [keyboardUp, setKeyboardUp] = useState(false);
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardUp(true));
-    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardUp(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
+  // The amount keypad is a CONTEXTUAL input accessory: it shows only while the
+  // Amount field is focused. Focusing a text field (Name/Note) blurs the
+  // amount and lets the system keyboard take over; tapping the amount brings
+  // the keypad back. Dismissing the system keyboard does NOT auto-show the
+  // keypad — visibility tracks amount focus alone, never the keyboard. Start
+  // focused so the primary action (entering the amount) is ready immediately.
+  const [amountFocused, setAmountFocused] = useState(true);
+
+  const focusAmount = () => {
+    Keyboard.dismiss(); // dismiss the system keyboard if a text field had it
+    setAmountFocused(true);
+  };
+  const blurAmount = () => {
+    Keyboard.dismiss();
+    setAmountFocused(false);
+  };
+  const onKeypadKey = (k: KeypadKey) => {
+    setKeypad((s) => pressKey(s, k));
+    // '=' resolves the calculation into the amount and exits keypad mode.
+    if (k === 'equals') setAmountFocused(false);
+  };
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<Category[]>([]);
@@ -172,8 +179,9 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
     switch (txType) {
       case 'expense':
       case 'income':
+        // Person belongs to Lending / Bill Split, not plain expense/income.
         if (!categoryId) return 'Pick a category.';
-        return { ...base, type: txType, accountId, categoryId, personId: personId ?? undefined };
+        return { ...base, type: txType, accountId, categoryId };
       case 'transfer':
         if (!toAccountId) return 'Pick the destination account.';
         if (toAccountId === accountId) return 'Transfer needs two different accounts.';
@@ -202,138 +210,139 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   const accountChips: ChipItem[] = accounts.map((a) => ({ id: a.id, label: a.name }));
   const showCategory = txType === 'expense' || txType === 'income';
 
+  const categoryField = showCategory ? (
+    <ChipSelector
+      label="Category"
+      items={categories.map((c) => ({
+        id: c.id,
+        label: c.name,
+        icon: c.icon as ChipItem['icon'],
+        color: c.color,
+      }))}
+      selectedId={categoryId}
+      onSelect={setCategoryId}
+    />
+  ) : null;
+
   return (
     <View style={styles.flex}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-          <Text style={[type.h1, { color: colors.text }]}>{title}</Text>
+        <ScrollView
+          contentContainerStyle={[
+            styles.container,
+            { paddingBottom: amountFocused ? KEYPAD_CLEARANCE : space.xxl },
+          ]}
+          keyboardShouldPersistTaps="handled">
+          {/* Tapping empty space blurs the amount, dismissing the keypad. */}
+          <Pressable onPress={blurAmount} style={styles.fields}>
+            <Text style={[type.h1, { color: colors.text }]}>{title}</Text>
 
-          <TypeSelector value={txType} onChange={setTxType} />
+            <TypeSelector value={txType} onChange={setTxType} />
 
-          {/* Tapping the amount dismisses the text keyboard, bringing the
-              number keypad back into view. */}
-          <Pressable accessibilityRole="button" onPress={Keyboard.dismiss}>
-            <AmountDisplay
-              valueMinor={displayMinor(keypad)}
-              txType={txType}
-              expression={expressionString(keypad)}
+            {/* Tapping the amount focuses it and brings the keypad back. */}
+            <Pressable accessibilityRole="button" accessibilityLabel="Edit amount" onPress={focusAmount}>
+              <AmountDisplay valueMinor={displayMinor(keypad)} txType={txType} />
+            </Pressable>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[type.label, { color: colors.textMuted }]}>Name</Text>
+              <TextInput
+                value={name}
+                onChangeText={setName}
+                onFocus={() => setAmountFocused(false)}
+                placeholder={txType === 'transfer' ? 'e.g. To savings' : 'e.g. Lunch'}
+                placeholderTextColor={colors.textSubtle}
+                style={[
+                  type.body,
+                  styles.textField,
+                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+                ]}
+              />
+            </View>
+
+            <ChipSelector
+              label={txType === 'transfer' ? 'From account' : 'Account'}
+              items={accountChips}
+              selectedId={accountId}
+              onSelect={setAccountId}
+              onAddNew={addAccount}
+              emptyHint="No accounts yet — add one."
             />
+
+            {txType === 'transfer' ? (
+              <ChipSelector
+                label="To account"
+                items={accountChips.filter((a) => a.id !== accountId)}
+                selectedId={toAccountId}
+                onSelect={setToAccountId}
+                emptyHint="Add a second account to transfer."
+              />
+            ) : null}
+
+            {txType === 'lending' ? (
+              <ChipSelector
+                label="Direction"
+                items={DIRECTION_OPTIONS.map((d) => ({ id: d.value, label: d.label }))}
+                selectedId={direction}
+                onSelect={(id) => setDirection(id as LendingDirection)}
+              />
+            ) : null}
+
+            {/* Person is only for Lending — expense/income use Bill Split to
+                involve people. */}
+            {txType === 'lending' ? (
+              <ChipSelector
+                label="Person"
+                items={people.map((p) => ({ id: p.id, label: p.name }))}
+                selectedId={personId}
+                onSelect={(id) => setPersonId((prev) => (prev === id ? null : id))}
+                onAddNew={addPerson}
+                emptyHint="No people yet — add one."
+              />
+            ) : null}
+
+            <View style={styles.fieldGroup}>
+              <Text style={[type.label, { color: colors.textMuted }]}>Date</Text>
+              <DateTimeField value={occurredAt} onChange={setOccurredAt} />
+            </View>
+
+            {/* Expense/income order (v2 fix): Amount, Name, Account, Date,
+                Category, Note — Category is second-last, before Note. */}
+            {categoryField}
+
+            <View style={styles.fieldGroup}>
+              <Text style={[type.label, { color: colors.textMuted }]}>Note (optional)</Text>
+              <TextInput
+                value={description}
+                onChangeText={setDescription}
+                onFocus={() => setAmountFocused(false)}
+                placeholder="Anything worth remembering"
+                placeholderTextColor={colors.textSubtle}
+                multiline
+                style={[
+                  type.body,
+                  styles.textField,
+                  styles.multiline,
+                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+                ]}
+              />
+            </View>
           </Pressable>
-
-        <View style={styles.fieldGroup}>
-          <Text style={[type.label, { color: colors.textMuted }]}>Name</Text>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder={txType === 'transfer' ? 'e.g. To savings' : 'e.g. Lunch'}
-            placeholderTextColor={colors.textSubtle}
-            style={[
-              type.body,
-              styles.textField,
-              { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
-            ]}
-          />
-        </View>
-
-        <ChipSelector
-          label={txType === 'transfer' ? 'From account' : 'Account'}
-          items={accountChips}
-          selectedId={accountId}
-          onSelect={setAccountId}
-          onAddNew={addAccount}
-          emptyHint="No accounts yet — add one."
-        />
-
-        {txType === 'transfer' ? (
-          <ChipSelector
-            label="To account"
-            items={accountChips.filter((a) => a.id !== accountId)}
-            selectedId={toAccountId}
-            onSelect={setToAccountId}
-            emptyHint="Add a second account to transfer."
-          />
-        ) : null}
-
-        {showCategory ? (
-          <ChipSelector
-            label="Category"
-            items={categories.map((c) => ({
-              id: c.id,
-              label: c.name,
-              icon: c.icon as ChipItem['icon'],
-              color: c.color,
-            }))}
-            selectedId={categoryId}
-            onSelect={setCategoryId}
-          />
-        ) : null}
-
-        {txType === 'lending' ? (
-          <ChipSelector
-            label="Direction"
-            items={DIRECTION_OPTIONS.map((d) => ({ id: d.value, label: d.label }))}
-            selectedId={direction}
-            onSelect={(id) => setDirection(id as LendingDirection)}
-          />
-        ) : null}
-
-        {txType !== 'transfer' ? (
-          <ChipSelector
-            label={txType === 'lending' ? 'Person' : 'Person (optional)'}
-            items={people.map((p) => ({ id: p.id, label: p.name }))}
-            selectedId={personId}
-            onSelect={(id) => setPersonId((prev) => (prev === id ? null : id))}
-            onAddNew={addPerson}
-            emptyHint="No people yet — add one."
-          />
-        ) : null}
-
-        <View style={styles.fieldGroup}>
-          <Text style={[type.label, { color: colors.textMuted }]}>When</Text>
-          <View style={styles.pickerRow}>
-            <DateTimePicker
-              value={occurredAt}
-              mode="datetime"
-              display="compact"
-              onChange={(_event, date) => date && setOccurredAt(date)}
-              themeVariant={isDark ? 'dark' : 'light'}
-              accentColor={colors.primary}
-            />
-          </View>
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={[type.label, { color: colors.textMuted }]}>Note (optional)</Text>
-          <TextInput
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Anything worth remembering"
-            placeholderTextColor={colors.textSubtle}
-            multiline
-            style={[
-              type.body,
-              styles.textField,
-              styles.multiline,
-              { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
-            ]}
-          />
-        </View>
-
-      </ScrollView>
+        </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Hidden while a text field is focused so the iOS keyboard can take the
-          bottom; it returns (with Save) once the keyboard is dismissed. */}
-      {keyboardUp ? null : (
+      {/* Contextual keypad: visible only while the Amount field is focused. */}
+      {amountFocused ? (
         <Keypad
-          onKey={(k: KeypadKey) => setKeypad((s) => pressKey(s, k))}
+          onKey={onKeypadKey}
           onSave={save}
           saveLabel={submitLabel}
+          expression={expressionString(keypad)}
           saving={saving}
         />
-      )}
+      ) : null}
     </View>
   );
 }
@@ -342,9 +351,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: {
     paddingHorizontal: screenPaddingH,
-    paddingBottom: KEYPAD_CLEARANCE,
-    gap: space.xl,
   },
+  fields: { gap: space.xl },
   fieldGroup: { gap: space.sm },
   textField: {
     borderWidth: 1,
@@ -353,5 +361,4 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   multiline: { minHeight: 64, textAlignVertical: 'top' },
-  pickerRow: { alignItems: 'flex-start' },
 });

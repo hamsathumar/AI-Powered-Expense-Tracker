@@ -64,3 +64,49 @@ export async function getSpendingByCategory(month: string): Promise<CategorySpen
     month,
   );
 }
+
+export interface DailySpending {
+  /** Day-of-month 1..31 (device-local). */
+  day: number;
+  totalMinor: number;
+}
+
+/** Approved expense per day of the month (golden rule). Days with no spending
+ *  are omitted — the caller fills the full month. */
+export async function getDailySpending(month: string): Promise<DailySpending[]> {
+  const db = await getDb();
+  return db.getAllAsync<DailySpending>(
+    `SELECT CAST(strftime('%d', occurred_at, 'localtime') AS INTEGER) AS day,
+            SUM(amount) AS totalMinor
+     FROM transactions
+     WHERE status = 'approved'
+       AND type = 'expense'                        -- golden rule
+       AND strftime('%Y-%m', occurred_at, 'localtime') = ?
+     GROUP BY day
+     ORDER BY day`,
+    month,
+  );
+}
+
+export interface AccountSpending {
+  accountId: string;
+  name: string;
+  type: 'bank' | 'card' | 'cash';
+  totalMinor: number;
+}
+
+/** Approved expense per account for the month (golden rule). */
+export async function getSpendingByAccount(month: string): Promise<AccountSpending[]> {
+  const db = await getDb();
+  return db.getAllAsync<AccountSpending>(
+    `SELECT a.id AS accountId, a.name, a.type, SUM(t.amount) AS totalMinor
+     FROM transactions t
+     JOIN accounts a ON a.id = t.account_id
+     WHERE t.status = 'approved'
+       AND t.type = 'expense'                      -- golden rule
+       AND strftime('%Y-%m', t.occurred_at, 'localtime') = ?
+     GROUP BY a.id
+     ORDER BY totalMinor DESC`,
+    month,
+  );
+}

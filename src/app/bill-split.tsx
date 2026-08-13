@@ -22,6 +22,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AmountInput } from '@/components/AmountInput';
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { SegmentedControl } from '@/components/SegmentedControl';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
@@ -160,17 +162,15 @@ export default function BillSplitScreen() {
   const payerChips: ChipItem[] = participantIds.map((id) => ({ id, label: personName(id) }));
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]} edges={['top']}>
+      <ScreenHeader title="Split a bill" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-          <Text style={[type.h1, { color: colors.text }]}>Split a bill</Text>
-
-          <AmountInput value={amountText} onChange={setAmountText} label="Bill total" />
-
+          {/* 1. What was it */}
           <View style={styles.fieldGroup}>
-            <Text style={[type.label, { color: colors.textMuted }]}>Name</Text>
+            <Text style={[type.label, { color: colors.textMuted }]}>What was it</Text>
             <TextInput
               value={name}
               onChangeText={setName}
@@ -184,34 +184,28 @@ export default function BillSplitScreen() {
             />
           </View>
 
-          <ChipSelector
-            label="Category (for your share)"
-            items={categories.map((c) => ({
-              id: c.id,
-              label: c.name,
-              icon: c.icon as ChipItem['icon'],
-              color: c.color,
-            }))}
-            selectedId={categoryId}
-            onSelect={setCategoryId}
-          />
+          {/* 2. Total */}
+          <AmountInput value={amountText} onChange={setAmountText} label="Total" />
 
+          {/* 3. Paid from */}
           <ChipSelector
-            label="Your account"
+            label="Paid from"
             items={accounts.map((a) => ({ id: a.id, label: a.name }))}
             selectedId={accountId}
             onSelect={setAccountId}
             emptyHint="No accounts yet — create one in the Accounts tab first."
           />
 
+          {/* 4. Who was in */}
           <ChipSelector
-            label="Participants"
+            label="Who was in"
             items={participantChips}
             selectedIds={participantIds}
             onSelect={toggleParticipant}
             onAddNew={addPerson}
           />
 
+          {/* Who actually paid (kept so "someone else paid" still works). */}
           <ChipSelector
             label="Who paid?"
             items={payerChips}
@@ -219,15 +213,18 @@ export default function BillSplitScreen() {
             onSelect={setPayerId}
           />
 
-          <ChipSelector
-            label="Split"
-            items={[
-              { id: 'equal', label: 'Equally' },
-              { id: 'custom', label: 'Custom amounts' },
-            ]}
-            selectedId={method}
-            onSelect={(id) => setMethod(id as 'equal' | 'custom')}
-          />
+          {/* 5. How to split */}
+          <View style={styles.fieldGroup}>
+            <Text style={[type.label, { color: colors.textMuted }]}>How to split</Text>
+            <SegmentedControl
+              options={[
+                { value: 'equal', label: 'Split equally' },
+                { value: 'custom', label: 'Custom amount' },
+              ]}
+              value={method}
+              onChange={setMethod}
+            />
+          </View>
 
           {method === 'custom' ? (
             <View style={styles.fieldGroup}>
@@ -250,14 +247,37 @@ export default function BillSplitScreen() {
                   />
                 </View>
               ))}
-              {customMismatch ? (
-                <Text style={[type.caption, { color: colors.danger }]}>
-                  Shares add to {formatAmount(customSum!)} but the bill is{' '}
-                  {formatAmount(totalMinor!)} — every cent must be assigned.
-                </Text>
+              {totalMinor !== null && customSum !== null ? (
+                <View style={styles.reconcile}>
+                  <Text style={[type.caption, { color: colors.textMuted }]}>
+                    Assigned {formatAmount(customSum)} of {formatAmount(totalMinor)}
+                  </Text>
+                  <Text
+                    style={[
+                      type.label,
+                      { color: customMismatch ? colors.warning : colors.income },
+                    ]}>
+                    {customMismatch
+                      ? `${formatAmount(Math.abs(totalMinor - customSum))} ${customSum > totalMinor ? 'over' : 'left'}`
+                      : 'Balanced'}
+                  </Text>
+                </View>
               ) : null}
             </View>
           ) : null}
+
+          {/* 6. Category — last (for your share's spending). */}
+          <ChipSelector
+            label="Category"
+            items={categories.map((c) => ({
+              id: c.id,
+              label: c.name,
+              icon: c.icon as ChipItem['icon'],
+              color: c.color,
+            }))}
+            selectedId={categoryId}
+            onSelect={setCategoryId}
+          />
 
           {shares && totalMinor !== null && !customMismatch ? (
             <View style={[styles.preview, { backgroundColor: colors.surfaceAlt }]}>
@@ -285,15 +305,15 @@ export default function BillSplitScreen() {
 
           <Pressable
             accessibilityRole="button"
-            disabled={saving}
+            disabled={saving || customMismatch}
             onPress={save}
             style={({ pressed }) => [
               styles.saveButton,
               { backgroundColor: pressed ? colors.primaryPress : colors.primary },
-              saving && styles.disabled,
+              (saving || customMismatch) && styles.disabled,
             ]}>
             <Text style={[type.h2, { color: colors.onPrimary }]}>
-              {saving ? 'Splitting…' : 'Split (goes to Queue)'}
+              {saving ? 'Splitting…' : 'Create split'}
             </Text>
           </Pressable>
         </ScrollView>
@@ -332,6 +352,12 @@ const styles = StyleSheet.create({
     paddingVertical: space.sm,
     textAlign: 'right',
   },
+  reconcile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: space.xs,
+  },
   preview: {
     borderRadius: radius.md,
     padding: space.md,
@@ -339,7 +365,7 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     minHeight: minTouchTarget + space.sm,
-    borderRadius: radius.lg,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },

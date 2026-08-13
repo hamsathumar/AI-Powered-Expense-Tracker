@@ -30,7 +30,17 @@ export const SETTINGS_KEYS = {
   defaultCurrency: 'default_currency',
   profileName: 'profile_name',
   profilePhotoUri: 'profile_photo_uri',
+  appearance: 'appearance',
 } as const;
+
+/** Theme preference: follow the system, or force light/dark (v2 §5.10). */
+export type AppearanceMode = 'system' | 'light' | 'dark';
+export const DEFAULT_APPEARANCE: AppearanceMode = 'system';
+
+export async function getAppearance(): Promise<AppearanceMode> {
+  const stored = await getSetting(SETTINGS_KEYS.appearance);
+  return stored === 'light' || stored === 'dark' ? stored : 'system';
+}
 
 /**
  * Default Gemini model. `generateContent` still serves this; if Google

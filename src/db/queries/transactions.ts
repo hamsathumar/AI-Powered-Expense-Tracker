@@ -226,6 +226,13 @@ function toListItem(row: JoinedRow): TransactionListItem {
   };
 }
 
+/** One transaction with its joined display fields (for the detail view). */
+export async function getTransactionItem(id: string): Promise<TransactionListItem | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<JoinedRow>(`${JOINED_SELECT} WHERE t.id = ?`, id);
+  return row ? toListItem(row) : null;
+}
+
 export interface TransactionListFilter {
   /** Only transactions touching this account — including transfers where it
    *  is the source OR destination (a transfer moves real money through it). */
