@@ -50,6 +50,24 @@ export async function renamePerson(id: string, name: string): Promise<void> {
   await db.runAsync('UPDATE people SET name = ?, unresolved = 0 WHERE id = ?', name, id);
 }
 
+/** How many transactions reference this person (any status). Used to block a
+ *  delete that would orphan lending / bill-split history. */
+export async function countTransactionsForPerson(id: string): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM transactions WHERE person_id = ?',
+    id,
+  );
+  return row?.n ?? 0;
+}
+
+/** Delete a person outright. Caller must first ensure no transactions
+ *  reference them (see countTransactionsForPerson). */
+export async function deletePerson(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM people WHERE id = ?', id);
+}
+
 export interface PersonWithNet {
   person: Person;
   netMinor: number;

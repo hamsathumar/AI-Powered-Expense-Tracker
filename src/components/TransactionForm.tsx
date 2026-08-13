@@ -4,6 +4,7 @@
  * discriminated union exactly. The caller decides what happens on submit
  * (insert as pending / update in place).
  */
+import { Feather } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -22,6 +23,7 @@ import { AmountDisplay } from '@/components/AmountDisplay';
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
 import { DateTimeField } from '@/components/DateTimeField';
 import { Keypad } from '@/components/Keypad';
+import { PeoplePicker } from '@/components/PeoplePicker';
 import { TypeSelector } from '@/components/TypeSelector';
 import { createAccount, listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
@@ -45,10 +47,13 @@ import type {
   TransactionType,
 } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
-import { radius, screenPaddingH, space, type } from '@/theme/tokens';
+import { keypadShadow, layout, radius, screenPaddingH, space, type } from '@/theme/tokens';
 
 // Enough scroll clearance so no field hides behind the pinned keypad panel.
 const KEYPAD_CLEARANCE = 470;
+// When the keypad is hidden the pinned Save bar takes its place; leave enough
+// room so the last field never scrolls beneath it.
+const SAVE_BAR_CLEARANCE = 120;
 
 const DIRECTION_OPTIONS: { value: LendingDirection; label: string }[] = [
   { value: 'lend', label: 'Lent out' },
@@ -90,6 +95,7 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   );
   const [description, setDescription] = useState(initial?.description ?? '');
   const [saving, setSaving] = useState(false);
+  const [personPickerOpen, setPersonPickerOpen] = useState(false);
   // The amount keypad is a CONTEXTUAL input accessory: it shows only while the
   // Amount field is focused. Focusing a text field (Name/Note) blurs the
   // amount and lets the system keyboard take over; tapping the amount brings
@@ -136,15 +142,12 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   }, [reload]);
 
   const categories = txType === 'income' ? incomeCategories : expenseCategories;
+  const selectedPersonName = people.find((p) => p.id === personId)?.name ?? null;
 
-  const addPerson = () => {
-    Alert.prompt('New person', 'Name', async (text) => {
-      const trimmed = text?.trim();
-      if (!trimmed) return;
-      const person = await createPerson(trimmed);
-      await reload();
-      setPersonId(person.id);
-    });
+  const createPersonAndReload = async (name: string) => {
+    const person = await createPerson(name);
+    await reload();
+    return person;
   };
 
   const addAccount = () => {
@@ -232,7 +235,7 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
         <ScrollView
           contentContainerStyle={[
             styles.container,
-            { paddingBottom: amountFocused ? KEYPAD_CLEARANCE : space.xxl },
+            { paddingBottom: amountFocused ? KEYPAD_CLEARANCE : SAVE_BAR_CLEARANCE },
           ]}
           keyboardShouldPersistTaps="handled">
           {/* Tapping empty space blurs the amount, dismissing the keypad. */}
@@ -291,16 +294,30 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
             ) : null}
 
             {/* Person is only for Lending — expense/income use Bill Split to
-                involve people. */}
+                involve people. Chosen from the People sheet, not a chip wrap. */}
             {txType === 'lending' ? (
-              <ChipSelector
-                label="Person"
-                items={people.map((p) => ({ id: p.id, label: p.name }))}
-                selectedId={personId}
-                onSelect={(id) => setPersonId((prev) => (prev === id ? null : id))}
-                onAddNew={addPerson}
-                emptyHint="No people yet — add one."
-              />
+              <View style={styles.fieldGroup}>
+                <Text style={[type.label, { color: colors.textMuted }]}>Person</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setAmountFocused(false);
+                    setPersonPickerOpen(true);
+                  }}
+                  style={[
+                    styles.selectField,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
+                  ]}>
+                  <Text
+                    style={[
+                      type.body,
+                      { color: selectedPersonName ? colors.text : colors.textSubtle },
+                    ]}>
+                    {selectedPersonName ?? 'Choose a person'}
+                  </Text>
+                  <Feather name="chevron-down" size={18} color={colors.textSubtle} />
+                </Pressable>
+              </View>
             ) : null}
 
             <View style={styles.fieldGroup}>
@@ -333,7 +350,10 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Contextual keypad: visible only while the Amount field is focused. */}
+      {/* Contextual keypad: visible only while the Amount field is focused.
+          When it's hidden the keypad's Save goes with it, so a pinned Save bar
+          takes its place — otherwise there'd be no way to submit once you've
+          moved off the amount (e.g. after typing a Note). */}
       {amountFocused ? (
         <Keypad
           onKey={onKeypadKey}
@@ -342,7 +362,34 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
           expression={expressionString(keypad)}
           saving={saving}
         />
-      ) : null}
+      ) : (
+        <View style={[styles.saveBar, keypadShadow, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={saving}
+            onPress={save}
+            style={({ pressed }) => [
+              styles.saveButton,
+              { backgroundColor: pressed ? colors.primaryPress : colors.primary },
+              saving && styles.disabled,
+            ]}>
+            <Text style={[type.h2, { color: colors.onPrimary }]}>
+              {saving ? 'Saving…' : submitLabel}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      <PeoplePicker
+        visible={personPickerOpen}
+        title="Choose a person"
+        multiple={false}
+        options={people.map((p) => ({ id: p.id, name: p.name }))}
+        selectedIds={personId ? [personId] : []}
+        onClose={() => setPersonPickerOpen(false)}
+        onDone={(ids) => setPersonId(ids[0] ?? null)}
+        onCreatePerson={createPersonAndReload}
+      />
     </View>
   );
 }
@@ -361,4 +408,31 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   multiline: { minHeight: 64, textAlignVertical: 'top' },
+  selectField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    minHeight: 48,
+  },
+  saveBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: screenPaddingH,
+    paddingTop: space.md,
+    paddingBottom: space.xxl,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  saveButton: {
+    minHeight: layout.primaryButtonH,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabled: { opacity: 0.6 },
 });

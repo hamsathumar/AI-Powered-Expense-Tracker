@@ -4,6 +4,7 @@
  * exact shares, then atomically inserts the generated transactions (which
  * land in the queue as pending, approved independently — decision P7).
  */
+import { Feather } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -22,6 +23,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AmountInput } from '@/components/AmountInput';
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
+import { PeoplePicker } from '@/components/PeoplePicker';
+import { initials } from '@/components/PersonRow';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { listAccounts } from '@/db/queries/accounts';
@@ -49,6 +52,7 @@ export default function BillSplitScreen() {
   const [method, setMethod] = useState<'equal' | 'custom'>('equal');
   const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -73,22 +77,20 @@ export default function BillSplitScreen() {
   const personName = (id: string) =>
     id === ME ? 'Me' : (people.find((p) => p.id === id)?.name ?? '?');
 
-  const toggleParticipant = (id: string) => {
-    setParticipantIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      if (!next.includes(payerId)) setPayerId(next[0] ?? ME);
-      return next;
-    });
+  // Commit a whole participant set (from the picker), keeping the payer valid.
+  const setParticipants = (ids: string[]) => {
+    if (!ids.includes(payerId)) setPayerId(ids[0] ?? ME);
+    setParticipantIds(ids);
   };
 
-  const addPerson = () => {
-    Alert.prompt('New person', 'Name', async (text) => {
-      const trimmed = text?.trim();
-      if (!trimmed) return;
-      const person = await createPerson(trimmed);
-      await reload();
-      setParticipantIds((prev) => [...prev, person.id]);
-    });
+  const removeParticipant = (id: string) => {
+    setParticipants(participantIds.filter((x) => x !== id));
+  };
+
+  const createPersonAndReload = async (name: string) => {
+    const person = await createPerson(name);
+    await reload();
+    return person;
   };
 
   /** Current shares per participant id, or null if inputs are incomplete. */
@@ -155,11 +157,8 @@ export default function BillSplitScreen() {
     }
   };
 
-  const participantChips: ChipItem[] = [
-    { id: ME, label: 'Me' },
-    ...people.map((p) => ({ id: p.id, label: p.name })),
-  ];
   const payerChips: ChipItem[] = participantIds.map((id) => ({ id, label: personName(id) }));
+  const pickerOptions = [{ id: ME, name: 'Me' }, ...people.map((p) => ({ id: p.id, name: p.name }))];
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]} edges={['top']}>
@@ -196,14 +195,49 @@ export default function BillSplitScreen() {
             emptyHint="No accounts yet — create one in the Accounts tab first."
           />
 
-          {/* 4. Who was in */}
-          <ChipSelector
-            label="Who was in"
-            items={participantChips}
-            selectedIds={participantIds}
-            onSelect={toggleParticipant}
-            onAddNew={addPerson}
-          />
+          {/* 4. Who was in — chosen from the People sheet, listed below. */}
+          <View style={styles.fieldGroup}>
+            <View style={styles.participantsHeader}>
+              <Text style={[type.label, { color: colors.textMuted }]}>Who was in</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setPickerOpen(true)}
+                hitSlop={space.sm}
+                style={styles.addParticipants}>
+                <Feather name="user-plus" size={16} color={colors.primary} />
+                <Text style={[type.label, { color: colors.primary }]}>Add</Text>
+              </Pressable>
+            </View>
+            {participantIds.length === 0 ? (
+              <Text style={[type.caption, { color: colors.textSubtle }]}>
+                No participants yet — tap Add.
+              </Text>
+            ) : (
+              <View style={styles.participantList}>
+                {participantIds.map((id) => (
+                  <View
+                    key={id}
+                    style={[styles.participantRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={[styles.participantAvatar, { backgroundColor: colors.primarySoft }]}>
+                      <Text style={[type.label, { color: colors.primary }]}>
+                        {id === ME ? 'Me' : initials(personName(id))}
+                      </Text>
+                    </View>
+                    <Text numberOfLines={1} style={[type.body, styles.participantName, { color: colors.text }]}>
+                      {personName(id)}
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${personName(id)}`}
+                      onPress={() => removeParticipant(id)}
+                      hitSlop={space.sm}>
+                      <Feather name="x" size={18} color={colors.textSubtle} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
 
           {/* Who actually paid (kept so "someone else paid" still works). */}
           <ChipSelector
@@ -318,6 +352,16 @@ export default function BillSplitScreen() {
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <PeoplePicker
+        visible={pickerOpen}
+        title="Who was in?"
+        options={pickerOptions}
+        selectedIds={participantIds}
+        onClose={() => setPickerOpen(false)}
+        onDone={setParticipants}
+        onCreatePerson={createPersonAndReload}
+      />
     </SafeAreaView>
   );
 }
@@ -332,6 +376,34 @@ const styles = StyleSheet.create({
     gap: space.xl,
   },
   fieldGroup: { gap: space.sm },
+  participantsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  addParticipants: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingVertical: space.xs,
+  },
+  participantList: { gap: space.sm },
+  participantRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    padding: space.md,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  participantAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  participantName: { flex: 1 },
   textField: {
     borderWidth: 1,
     borderRadius: radius.md,

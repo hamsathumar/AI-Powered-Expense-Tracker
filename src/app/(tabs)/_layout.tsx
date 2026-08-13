@@ -28,8 +28,10 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        // Smooth cross-shift between tabs instead of an instant cut (design §7).
-        animation: 'shift',
+        // NOTE: `animation: 'shift'` was removed — it intermittently left a tab
+        // rendered blank (scene mounted but stuck transparent during the
+        // transition). Default (instant) switching is reliable; revisit with a
+        // gentler 'fade' only if the blank-page regression is confirmed gone.
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textSubtle,
         tabBarStyle: {

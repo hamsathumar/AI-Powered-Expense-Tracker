@@ -13,6 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { describeNet, initials } from '@/components/PersonRow';
 import { TransactionRow } from '@/components/TransactionRow';
 import {
+  countTransactionsForPerson,
+  deletePerson,
   getPerson,
   getPersonNetBalanceMinor,
   hasPendingLending,
@@ -68,6 +70,26 @@ export default function PersonDetailScreen() {
     }, undefined, person.name);
   };
 
+  const remove = () => {
+    if (!person) return;
+    const doDelete = async () => {
+      const count = await countTransactionsForPerson(person.id);
+      if (count > 0) {
+        Alert.alert(
+          "Can't delete",
+          `${person.name} is on ${count} transaction${count === 1 ? '' : 's'}. Delete or reassign those first, otherwise the history would be orphaned.`,
+        );
+        return;
+      }
+      await deletePerson(person.id);
+      router.back();
+    };
+    Alert.alert('Delete person', `Remove ${person.name}? This can't be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
+    ]);
+  };
+
   if (!person) return <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]} />;
 
   return (
@@ -99,8 +121,15 @@ export default function PersonDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Rename"
                 onPress={rename}
-                style={styles.renameButton}>
+                style={styles.iconButton}>
                 <Feather name="edit-2" size={18} color={colors.textMuted} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Delete person"
+                onPress={remove}
+                style={styles.iconButton}>
+                <Feather name="trash-2" size={18} color={colors.danger} />
               </Pressable>
             </View>
 
@@ -165,7 +194,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   identityText: { flex: 1, gap: 2 },
-  renameButton: {
+  iconButton: {
     minWidth: minTouchTarget,
     minHeight: minTouchTarget,
     alignItems: 'center',

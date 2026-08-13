@@ -22,7 +22,7 @@ import { accountDeltaMinor } from '@/domain/accountActivity';
 import { formatAmount } from '@/domain/money';
 import type { Account } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
-import { minTouchTarget, radius, screenPaddingH, space, tabularNums, type } from '@/theme/tokens';
+import { fontFamily, minTouchTarget, radius, screenPaddingH, space, tabularNums, type } from '@/theme/tokens';
 
 function dayTitle(iso: string): string {
   const date = new Date(iso);
@@ -129,7 +129,7 @@ export default function AccountsScreen() {
           placeholder="Search transactions"
           placeholderTextColor={colors.textSubtle}
           autoCapitalize="none"
-          style={[type.body, styles.searchInput, { color: colors.text }]}
+          style={[styles.searchInput, { color: colors.text }]}
         />
         {search.length > 0 ? (
           <Pressable accessibilityRole="button" onPress={() => setSearch('')} hitSlop={space.sm}>
@@ -228,7 +228,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     minHeight: minTouchTarget,
   },
-  searchInput: { flex: 1, paddingVertical: space.sm },
+  // No lineHeight here: on iOS a TextInput inheriting type.body's lineHeight
+  // renders glyphs offset toward the top of the line box, so the text looks
+  // un-centred against the search icon. Set the font explicitly, drop
+  // lineHeight, and let the row's alignItems:'center' centre it.
+  searchInput: {
+    flex: 1,
+    paddingVertical: space.sm,
+    fontFamily: fontFamily.body,
+    fontSize: 15,
+    includeFontPadding: false,
+  },
   empty: {
     alignItems: 'center',
     gap: space.md,

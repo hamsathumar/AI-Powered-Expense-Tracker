@@ -21,7 +21,7 @@ import {
 } from 'expo-audio';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { logVoiceTransaction, type VoiceResult } from '@/ai/parseVoice';
@@ -95,9 +95,11 @@ export default function VoiceScreen() {
   const [loggedItem, setLoggedItem] = useState<TransactionListItem | null>(null);
   const [retryUri, setRetryUri] = useState<string | null>(null);
 
+  // The pulse ring breathes while recording AND while understanding, so the
+  // processing wait doesn't feel frozen.
   const [pulse] = useState(() => new Animated.Value(1));
   useEffect(() => {
-    if (phase !== 'recording') {
+    if (phase !== 'recording' && phase !== 'processing') {
       pulse.setValue(1);
       return;
     }
@@ -110,6 +112,26 @@ export default function VoiceScreen() {
     loop.start();
     return () => loop.stop();
   }, [phase, pulse]);
+
+  // Continuous spin for the loader icon while Gemini is parsing.
+  const [spin] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (phase !== 'processing') {
+      spin.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [phase, spin]);
+  const spinDeg = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   const startRecording = async () => {
     if (!(await hasGeminiApiKey())) {
@@ -297,9 +319,13 @@ export default function VoiceScreen() {
             <Text style={[type.sectionLabel, { color: colors.canopyAccent }]}>
               {busy ? 'Understanding' : recording ? 'Listening' : 'Ready'}
             </Text>
-            {recording ? <AmplitudeMeter active color={onCapture} /> : null}
+            {recording || busy ? <AmplitudeMeter active color={onCapture} /> : null}
             <Text style={[styles.hint, styles.centerText, { color: onCapture }]}>
-              {busy ? 'Understanding…' : recording ? 'Speak your transaction' : 'Tap the mic and say it'}
+              {busy
+                ? 'Turning your words into a transaction'
+                : recording
+                  ? 'Speak your transaction'
+                  : 'Tap the mic and say it'}
             </Text>
             {recording ? (
               <Text style={[styles.timer, { color: onCaptureMuted }]}>
@@ -313,7 +339,7 @@ export default function VoiceScreen() {
       <View style={styles.buttonArea}>
         <View style={styles.buttonWrap}>
           <Animated.View
-            style={[styles.ring, { backgroundColor: ringColor, transform: [{ scale: pulse }] }, !recording && styles.hidden]}
+            style={[styles.ring, { backgroundColor: ringColor, transform: [{ scale: pulse }] }, !(recording || busy) && styles.hidden]}
           />
           <Pressable
             accessibilityRole="button"
@@ -321,7 +347,13 @@ export default function VoiceScreen() {
             disabled={busy}
             onPress={onPressButton}
             style={[styles.recordButton, { backgroundColor: buttonBg }]}>
-            <Feather name={recording ? 'square' : busy ? 'loader' : 'mic'} size={30} color={buttonIcon} />
+            {busy ? (
+              <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
+                <Feather name="loader" size={30} color={buttonIcon} />
+              </Animated.View>
+            ) : (
+              <Feather name={recording ? 'square' : 'mic'} size={30} color={buttonIcon} />
+            )}
           </Pressable>
         </View>
         <Text style={[type.caption, styles.centerText, { color: onCaptureMuted }]}>
