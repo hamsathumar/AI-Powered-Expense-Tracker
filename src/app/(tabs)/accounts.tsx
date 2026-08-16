@@ -228,13 +228,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     minHeight: minTouchTarget,
   },
-  // No lineHeight here: on iOS a TextInput inheriting type.body's lineHeight
-  // renders glyphs offset toward the top of the line box, so the text looks
-  // un-centred against the search icon. Set the font explicitly, drop
-  // lineHeight, and let the row's alignItems:'center' centre it.
+  // iOS reliably centres a single-line TextInput only when it has an explicit
+  // height and no vertical padding — with padding-based sizing the glyphs sit
+  // toward the top of the line box and read as un-centred against the search
+  // icon. Fill the row's touch-target height and let iOS centre the line.
   searchInput: {
     flex: 1,
-    paddingVertical: space.sm,
+    height: minTouchTarget,
+    paddingVertical: 0,
     fontFamily: fontFamily.body,
     fontSize: 15,
     includeFontPadding: false,

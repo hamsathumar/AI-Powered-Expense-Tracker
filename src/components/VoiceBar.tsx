@@ -32,7 +32,7 @@ export function VoiceBar({ onSpeak, onAdd }: Props) {
         scaleTo={0.97}
         style={[styles.bar, { backgroundColor: colors.primary }, !isDark && shadow]}>
         <Feather name="mic" size={22} color={colors.onPrimary} />
-        <Text style={[styles.barLabel, { color: colors.onPrimary }]}>Hold to speak</Text>
+        <Text style={[styles.barLabel, { color: colors.onPrimary }]}>Tap to speak</Text>
       </PressableScale>
       <PressableScale
         accessibilityRole="button"

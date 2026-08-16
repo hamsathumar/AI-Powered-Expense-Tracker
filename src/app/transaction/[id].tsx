@@ -1,6 +1,8 @@
 /**
- * Edit a PENDING transaction (queue "Edit" action, spec §7). Approved and
- * rejected rows are historical facts — not editable in v1.
+ * Edit an existing transaction (queue "Edit" action + the detail-screen Edit).
+ * Both pending and approved rows are editable: balances/reports are derived in
+ * SQL from approved rows on the fly, so updating fields simply recomputes every
+ * total — there is no stored balance to reconcile. Rejected rows stay locked.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -22,8 +24,8 @@ export default function EditTransactionScreen() {
     getTransaction(id)
       .then((found) => {
         if (!found) throw new Error('Transaction not found');
-        if (found.status !== 'pending') {
-          throw new Error('Only pending transactions can be edited');
+        if (found.status === 'rejected') {
+          throw new Error('Rejected transactions cannot be edited');
         }
         setTx(found);
       })

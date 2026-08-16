@@ -87,7 +87,7 @@ export function AccountForm({ title, initial, onSubmit, onArchive }: Props) {
           placeholder="e.g. Commercial Bank"
           placeholderTextColor={colors.textSubtle}
           style={[
-            type.body,
+            type.input,
             styles.textField,
             { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
           ]}

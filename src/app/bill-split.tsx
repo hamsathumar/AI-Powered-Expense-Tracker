@@ -176,7 +176,7 @@ export default function BillSplitScreen() {
               placeholder="e.g. Dinner at Upali's"
               placeholderTextColor={colors.textSubtle}
               style={[
-                type.body,
+                type.input,
                 styles.textField,
                 { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
               ]}

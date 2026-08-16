@@ -258,7 +258,7 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
                 placeholder={txType === 'transfer' ? 'e.g. To savings' : 'e.g. Lunch'}
                 placeholderTextColor={colors.textSubtle}
                 style={[
-                  type.body,
+                  type.input,
                   styles.textField,
                   { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
                 ]}

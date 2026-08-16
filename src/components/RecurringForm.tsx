@@ -211,7 +211,7 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
             placeholder="e.g. Boarding Rent"
             placeholderTextColor={colors.textSubtle}
             style={[
-              type.body,
+              type.input,
               styles.textField,
               { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
             ]}
@@ -270,7 +270,7 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
               placeholder="e.g. 2400000"
               placeholderTextColor={colors.textSubtle}
               style={[
-                type.body,
+                type.input,
                 styles.textField,
                 { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
               ]}
@@ -285,7 +285,7 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
               placeholder="e.g. 24"
               placeholderTextColor={colors.textSubtle}
               style={[
-                type.body,
+                type.input,
                 styles.textField,
                 { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
               ]}
@@ -332,7 +332,7 @@ export function RecurringForm({ title, initial, onSubmit, onDelete }: Props) {
               placeholder="e.g. 10"
               placeholderTextColor={colors.textSubtle}
               style={[
-                type.body,
+                type.input,
                 styles.textField,
                 { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
               ]}

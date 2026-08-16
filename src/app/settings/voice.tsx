@@ -94,7 +94,7 @@ export default function VoiceSettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry
-          style={[type.body, styles.field, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
+          style={[type.input, styles.field, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
         />
         <Pressable
           accessibilityRole="button"
@@ -121,7 +121,7 @@ export default function VoiceSettingsScreen() {
           placeholderTextColor={colors.textSubtle}
           autoCapitalize="none"
           autoCorrect={false}
-          style={[type.body, styles.field, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
+          style={[type.input, styles.field, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
         />
         <Text style={[type.caption, { color: colors.textSubtle }]}>
           Change this if Google deprecates the default.

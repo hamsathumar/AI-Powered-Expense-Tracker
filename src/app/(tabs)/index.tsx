@@ -182,7 +182,7 @@ export default function HomeScreen() {
               <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Feather name="check-circle" size={22} color={colors.textSubtle} />
                 <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-                  Queue is clear — hold to speak, or tap + to add something.
+                  Queue is clear — tap mic to speak, or tap + to add something.
                 </Text>
               </View>
             ) : (

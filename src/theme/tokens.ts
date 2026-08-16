@@ -227,6 +227,12 @@ export const type = {
   amount:    { fontFamily: fontFamily.heading, fontSize: 17, lineHeight: 22, ...tabularNums },
   /** Default text */
   body:      { fontFamily: fontFamily.body, fontSize: 15, lineHeight: 22 },
+  /** Single-line text-input text. Identical to `body` but WITHOUT lineHeight:
+   *  on iOS a lineHeight set on a TextInput renders its glyphs offset toward
+   *  the top of the line box, so a single-line field looks vertically
+   *  un-centred against its icons/border. Use this on every single-line
+   *  TextInput (multiline fields keep `body`, where lineHeight aids reading). */
+  input:     { fontFamily: fontFamily.body, fontSize: 15, includeFontPadding: false },
   /** Field labels, chips */
   label:     { fontFamily: fontFamily.medium, fontSize: 13, lineHeight: 18 },
   /** Timestamps, metadata */

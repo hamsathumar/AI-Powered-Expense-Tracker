@@ -101,7 +101,7 @@ export default function TransactionDetailScreen() {
       <ScreenHeader
         title="Transaction"
         right={
-          tx.status === 'pending' ? (
+          tx.status !== 'rejected' ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Edit"
@@ -149,7 +149,7 @@ export default function TransactionDetailScreen() {
         ) : null}
 
         <View style={styles.footer}>
-          {tx.status === 'pending' ? (
+          {tx.status !== 'rejected' ? (
             <Pressable
               accessibilityRole="button"
               onPress={() => router.push({ pathname: '/transaction/[id]', params: { id: tx.id } })}
@@ -162,9 +162,9 @@ export default function TransactionDetailScreen() {
             accessibilityRole="button"
             accessibilityLabel="Delete"
             onPress={confirmDelete}
-            style={[styles.deleteButton, { borderColor: colors.border }, tx.status !== 'pending' && styles.deleteWide]}>
+            style={[styles.deleteButton, { borderColor: colors.border }, tx.status === 'rejected' && styles.deleteWide]}>
             <Feather name="trash-2" size={18} color={colors.expense} />
-            {tx.status !== 'pending' ? (
+            {tx.status === 'rejected' ? (
               <Text style={[type.h2, { color: colors.expense }]}>Delete</Text>
             ) : null}
           </Pressable>

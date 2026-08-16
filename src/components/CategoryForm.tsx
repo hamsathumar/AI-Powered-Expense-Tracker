@@ -89,7 +89,7 @@ export function CategoryForm({ title, initial, onSubmit, onArchive }: Props) {
           placeholder="e.g. Streaming"
           placeholderTextColor={colors.textSubtle}
           style={[
-            type.body,
+            type.input,
             styles.textField,
             { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
           ]}
