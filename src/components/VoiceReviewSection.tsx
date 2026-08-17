@@ -1,22 +1,23 @@
 /**
- * Voice review queue (Transaction AI V1).
+ * Voice review list (Transaction AI V1) — the AI-interpreted pending operations
+ * produced by the voice pipeline.
  *
- * Lists application-owned pending operations produced by the voice pipeline.
- * Every Approve — single or "Approve all" — routes through the deterministic
- * final safety gate (commitPendingOperation / commitAllApprovable); an
- * operation with unresolved fields or an unresolved conflict is NOT approvable
- * and must be opened/edited first. Self-contained: it loads on focus so Home
- * only needs to render <VoiceReviewSection />.
+ * Rendered HEADERLESS inside Home's single "To review" section (alongside the
+ * manual pending-transaction queue) so there is exactly one review heading and
+ * one empty state. It loads its own data on focus and reports its item count up
+ * via `onCountChange` so Home can drive the shared header badge / empty card.
+ *
+ * Every Approve routes through the deterministic final safety gate
+ * (commitPendingOperation); an operation with unresolved fields or a conflict is
+ * NOT approvable and must be opened/edited first. Renders nothing when empty.
  */
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Amount } from '@/components/Amount';
-import { SectionHeader } from '@/components/SectionHeader';
 import {
-  commitAllApprovable,
   commitPendingOperation,
   evaluateAllPending,
   type EvaluatedPending,
@@ -44,7 +45,12 @@ function metaLine(item: EvaluatedPending): string {
   return parts.join(' · ');
 }
 
-export function VoiceReviewSection() {
+interface Props {
+  /** Reports the current pending-operation count to Home (shared header/empty). */
+  onCountChange?: (n: number) => void;
+}
+
+export function VoiceReviewSection({ onCountChange }: Props) {
   const { colors, isDark } = useTheme();
   const router = useRouter();
   const [items, setItems] = useState<EvaluatedPending[]>([]);
@@ -55,6 +61,9 @@ export function VoiceReviewSection() {
       .catch((e) => Alert.alert('Review error', String(e)));
   }, []);
   useFocusEffect(reload);
+
+  // Keep Home's shared badge / empty-state in sync (effect, not during render).
+  useEffect(() => onCountChange?.(items.length), [items, onCountChange]);
 
   const isSpecialized = (item: EvaluatedPending) =>
     item.op.kind === 'bill_split' || item.op.kind === 'recurring';
@@ -95,39 +104,11 @@ export function VoiceReviewSection() {
     deletePendingOperation(item.id).then(reload);
   };
 
-  const approveAll = () => {
-    const approvable = items.filter((i) => i.gate.approvable).length;
-    Alert.alert('Approve all ready?', `${approvable} ready to commit will start counting. Items still needing details are skipped.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Approve ready',
-        onPress: () => commitAllApprovable().then(reload),
-      },
-    ]);
-  };
-
   if (items.length === 0) return null;
-  const readyCount = items.filter((i) => i.gate.approvable).length;
 
   return (
-    <View style={styles.section}>
-      <SectionHeader
-        title="Voice review"
-        right={
-          <View style={styles.headerRight}>
-            <View style={[styles.badge, { backgroundColor: colors.warning }]}>
-              <Text style={[styles.badgeLabel, { color: isDark ? colors.bg : colors.onPrimary }]}>{items.length}</Text>
-            </View>
-            {readyCount > 1 ? (
-              <Pressable accessibilityRole="button" onPress={approveAll} hitSlop={space.sm}>
-                <Text style={[type.label, { color: colors.primary }]}>Approve ready</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        }
-      />
-      <View style={styles.list}>
-        {items.map((item) => {
+    <View style={styles.list}>
+      {items.map((item) => {
           const specialized = isSpecialized(item);
           const blocked = !item.gate.approvable;
           const primaryLabel = specialized ? 'Review & Edit' : blocked ? 'Finish details' : 'Approve';
@@ -205,16 +186,11 @@ export function VoiceReviewSection() {
             </View>
           );
         })}
-      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  section: { gap: space.md },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  badge: { borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 1, minWidth: 20, alignItems: 'center' },
-  badgeLabel: { fontFamily: fontFamily.heading, fontSize: 12 },
   list: { gap: space.md - 2 },
   card: { borderRadius: layout.cardRadius, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
   body: { flexDirection: 'row', gap: space.md, paddingTop: space.md + 2, paddingHorizontal: space.md + 2, paddingBottom: space.sm + 2 },

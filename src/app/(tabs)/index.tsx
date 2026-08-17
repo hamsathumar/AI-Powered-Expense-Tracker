@@ -70,6 +70,9 @@ export default function HomeScreen() {
   const [spending, setSpending] = useState<CategorySpending[]>([]);
   const [templates, setTemplates] = useState<RecurringTemplate[]>([]);
   const [owed, setOwed] = useState<PersonWithNet[]>([]);
+  // Voice pending-operation count, reported up by VoiceReviewSection so the
+  // single "To review" header/empty state can account for both queues.
+  const [voicePendingCount, setVoicePendingCount] = useState(0);
 
   const reload = useCallback(() => {
     const month = monthKey(new Date());
@@ -145,6 +148,7 @@ export default function HomeScreen() {
   const hasComingUp = upcoming.length > 0 || owedTop.length > 0;
 
   const badgeText = isDark ? colors.bg : colors.onPrimary;
+  const reviewTotal = pending.length + voicePendingCount;
 
   return (
     <View style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.primary }]}>
@@ -160,18 +164,17 @@ export default function HomeScreen() {
         <View style={[styles.sheet, { backgroundColor: colors.bg }]}>
           <QuickActions />
 
-          {/* Voice review — AI-interpreted pending operations (gated approval) */}
-          <VoiceReviewSection />
-
-          {/* To review — the approval queue */}
+          {/* To review — ONE approval queue: AI voice pending operations
+              (VoiceReviewSection, headerless) + manual pending transactions,
+              under a single header with a single empty state. */}
           <View style={styles.section}>
             <SectionHeader
               title="To review"
               right={
                 <View style={styles.headerRight}>
-                  {pending.length > 0 ? (
+                  {reviewTotal > 0 ? (
                     <View style={[styles.badge, { backgroundColor: colors.warning }]}>
-                      <Text style={[styles.badgeLabel, { color: badgeText }]}>{pending.length}</Text>
+                      <Text style={[styles.badgeLabel, { color: badgeText }]}>{reviewTotal}</Text>
                     </View>
                   ) : null}
                   {pending.length > 1 ? (
@@ -182,33 +185,40 @@ export default function HomeScreen() {
                 </View>
               }
             />
-            {pending.length === 0 ? (
-              <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Feather name="check-circle" size={22} color={colors.textSubtle} />
-                <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-                  Queue is clear — tap mic to speak, or tap + to add something.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.queueList}>
-                {pending.map((item) => (
-                  <Animated.View
-                    key={item.tx.id}
-                    entering={FadeIn.duration(200)}
-                    exiting={FadeOut.duration(200)}
-                    layout={LinearTransition.duration(220)}>
-                    <QueueItemCard
-                      item={item}
-                      onApprove={() => act(item.tx.id, 'approved')}
-                      onReject={() => act(item.tx.id, 'rejected')}
-                      onEdit={() =>
-                        router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })
-                      }
-                    />
-                  </Animated.View>
-                ))}
-              </View>
-            )}
+            <View style={styles.reviewStack}>
+              {/* Voice pending ops (renders nothing when empty) */}
+              <VoiceReviewSection onCountChange={setVoicePendingCount} />
+
+              {pending.length > 0 ? (
+                <View style={styles.queueList}>
+                  {pending.map((item) => (
+                    <Animated.View
+                      key={item.tx.id}
+                      entering={FadeIn.duration(200)}
+                      exiting={FadeOut.duration(200)}
+                      layout={LinearTransition.duration(220)}>
+                      <QueueItemCard
+                        item={item}
+                        onApprove={() => act(item.tx.id, 'approved')}
+                        onReject={() => act(item.tx.id, 'rejected')}
+                        onEdit={() =>
+                          router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })
+                        }
+                      />
+                    </Animated.View>
+                  ))}
+                </View>
+              ) : null}
+
+              {pending.length === 0 && voicePendingCount === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <Feather name="check-circle" size={22} color={colors.textSubtle} />
+                  <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
+                    Queue is clear — tap mic to speak, or tap + to add something.
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
 
           {/* Today — approved transactions logged today (any type) */}
@@ -369,6 +379,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   badgeLabel: { fontFamily: fontFamily.heading, fontSize: 12 },
+  reviewStack: { gap: space.md - 2 },
   queueList: { gap: space.md - 2 },
   emptyCard: {
     borderRadius: layout.cardRadius,

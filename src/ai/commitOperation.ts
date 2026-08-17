@@ -141,6 +141,28 @@ export async function evaluateAllPending(): Promise<EvaluatedPending[]> {
   });
 }
 
+/**
+ * Refresh + gate a SPECIFIC set of pending operations (one ctx load). Used by
+ * the voice confirmation screen to show only the operations produced by the
+ * capture that just happened — with their live gate status, so "Approve now"
+ * can be offered inline. Missing ids (already approved/rejected elsewhere) are
+ * skipped. Order follows the input ids.
+ */
+export async function evaluatePendingByIds(ids: string[]): Promise<EvaluatedPending[]> {
+  if (ids.length === 0) return [];
+  const [ctx, records] = await Promise.all([
+    loadContext(),
+    Promise.all(ids.map((id) => getPendingOperation(id))),
+  ]);
+  const out: EvaluatedPending[] = [];
+  for (const r of records) {
+    if (!r) continue;
+    const op = refresh(r.op, ctx);
+    out.push({ id: r.id, op, gate: evaluateApproval(op), createdAt: r.createdAt });
+  }
+  return out;
+}
+
 /** Bulk approve — commits only the operations that pass the gate; others stay. */
 export async function commitAllApprovable(): Promise<{ committed: number; skipped: number }> {
   const records = await listPendingOperations();

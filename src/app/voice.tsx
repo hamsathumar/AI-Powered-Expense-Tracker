@@ -1,313 +1,143 @@
 /**
- * Voice capture (spec §8.3, design-system-v2.md §5.5) — the app's signature
- * interaction. Tap to record; stopping sends the audio to the Transaction AI
- * V1 pipeline (src/ai/interpretVoice.ts): Gemini interprets, the app validates,
- * resolves entities, and drops application-owned PENDING OPERATIONS into the
- * Voice review queue on Home. Nothing is committed here and nothing is
- * auto-approved — approval happens later behind the deterministic safety gate.
- * A grounded amount is required to create anything; "no amount" logs nothing.
- * A failure keeps the recording so nothing spoken is lost (technical-plan §5.7).
+ * Voice capture v2 — the app's signature interaction (spec §8.3; design ref:
+ * "Voice capture — organic orb flow").
  *
- * The capture screen is a full-bleed brand surface (brown in light; the
- * neutral dark surface in dark, per v2 §2.8). It reads as a single instrument
- * that never looks static: a gold eyebrow names the current state, a live
- * waveform reacts while you speak, and the moment you stop the bars collapse
- * into a single travelling gold pulse. That pulse line stays mounted and
- * constant through the whole processing wait while the eyebrow/headline/caption
- * crossfade through a short Transcribing → Understanding → Saving sequence — a
- * perceived-progress trick (see PROCESSING_STAGES) that runs on a timer over
- * the single real async call, not a real per-step progress tracker. On success
- * it hands off to the "Logged" confirmation (parsed row + Approve now / Review
- * later).
+ * TWO consumers, ONE microphone capture (see src/hooks/useVoiceCapture.ts):
+ *  - Pipeline B (display): iOS on-device speech streams PARTIAL words + volume
+ *    while you speak, so the screen genuinely reacts — live transcript on screen
+ *    and an audio-reactive Skia orb (src/components/voice/VoiceOrb.tsx).
+ *  - Pipeline A (unchanged interpretation): on stop, the same utterance's
+ *    persisted WAV is handed to interpretVoice() → Gemini → validate → resolve →
+ *    pending operations. Nothing is committed or auto-approved here.
  *
- * Backgrounding resilience (fix): iOS tears down an in-flight network request
- * once the app is suspended, so switching apps mid-parse used to surface a
- * terminal "network error" and drop the work. We now detect that the app was
- * backgrounded during processing and treat the resulting failure as an
- * interruption, not a failure — the recording is retained and the parse
- * resumes automatically the moment we're back in the foreground.
+ * Phases share one surface and crossfade — never a hard cut:
+ *   ready → listening → processing → success (per-transaction confirm cards) .
+ * The processing wait shows warm, cycling micro-copy tied to real latency (it
+ * loops until Gemini actually returns), NOT a scripted timeline. Haptics + short
+ * sound cues punctuate start / stop / logged.
+ *
+ * Backgrounding resilience (kept from v1): iOS kills an in-flight network
+ * request when suspended, so a parse interrupted by backgrounding is retained
+ * and resumed on return to the foreground rather than surfaced as a failure.
  */
 import { Feather } from '@expo/vector-icons';
-import {
-  RecordingPresets,
-  requestRecordingPermissionsAsync,
-  setAudioModeAsync,
-  useAudioRecorder,
-  useAudioRecorderState,
-} from 'expo-audio';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, AppState, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { evaluatePendingByIds, type EvaluatedPending } from '@/ai/commitOperation';
 import { interpretVoice, type InterpretResult } from '@/ai/interpretVoice';
 import { hasGeminiApiKey } from '@/ai/secureConfig';
+import { ConfirmCard } from '@/components/voice/ConfirmCard';
+import { VoiceOrb, type OrbPhase } from '@/components/voice/VoiceOrb';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { useVoiceCapture, type CaptureResult } from '@/hooks/useVoiceCapture';
+import { hapticError, hapticStart, hapticStop, hapticSuccess } from '@/lib/haptics';
+import { playChime, playStart, playWhoosh, primeSoundSession } from '@/lib/soundFx';
 import { usePendingCount } from '@/state/PendingCount';
 import { useTheme } from '@/theme/ThemeContext';
-import { fontFamily, layout, radius, screenPaddingH, space, type } from '@/theme/tokens';
+import { fontFamily, radius, screenPaddingH, space, type } from '@/theme/tokens';
 
-type Phase = 'idle' | 'recording' | 'processing' | 'success' | 'error';
+type Phase = 'ready' | 'listening' | 'processing' | 'success' | 'error';
+
+const AUDIO_MIME = 'audio/wav'; // pipeline B persists WAV; Gemini accepts it
+
+/** Warm, conversational lines that rotate while Gemini works. No status jargon,
+ *  no timeline — they loop until the real result lands (design: "kill the
+ *  literal status labels"). */
+const PROCESSING_COPY = [
+  'Got it — one sec…',
+  'Picking out the details…',
+  'Making sense of that…',
+  'Almost there…',
+];
 
 function formatDuration(ms: number): string {
   const total = Math.floor(ms / 1000);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-type WaveMode = 'ready' | 'listening' | 'processing';
-
-const WAVE_BARS = 40;
-
-/**
- * Perceived-progress stages shown during the processing gap (recording stopped
- * → real result ready). This is purely presentational: the labels cycle on a
- * timer while the single real async call runs underneath, so the screen reads
- * as staged work rather than one frozen message. It is NOT wired to the real
- * transcription / parse / insert milestones. Durations vary slightly per stage
- * (0.7–1.3s) so the cadence feels natural; the last stage loops if the real
- * work outlasts the sequence. Copy stays in Kaasu's plain, warm voice
- * (design-system.md §1).
- */
-const PROCESSING_STAGES = [
-  { eyebrow: 'Transcribing', heading: 'Catching that…', caption: 'Turning your voice into words.', hold: 1000 },
-  { eyebrow: 'Understanding', heading: 'Working on it…', caption: 'Turning your words into a transaction.', hold: 1500 },
-  { eyebrow: 'Saving', heading: 'Almost done…', caption: 'Getting it ready for your queue.', hold: 600 },
-] as const;
-
-/** The real async result, buffered so it lands only at a stage boundary — never
- *  mid-stage (see the stage-sequencing effect). */
-type Outcome =
-  | { kind: 'success'; result: InterpretResult }
-  | { kind: 'error'; message: string };
-
-/** Cosine window so the row of bars reads as a tapered *shape* (short at the
- *  edges, tall in the middle) rather than a flat meter. Returns 0.18–1. */
-function taper(i: number): number {
-  const t = i / (WAVE_BARS - 1);
-  return 0.18 + Math.sin(Math.PI * t) * 0.82;
-}
-
-/**
- * The instrument. Three visual modes sharing one footprint so state changes
- * crossfade in place and the screen never looks stuck:
- *  - ready       → a still row of low dots
- *  - listening   → 40 tapered bars looping at speech-like speed
- *  - processing  → the bars are gone; a 2px line carries a gold pulse across it
- */
-function Waveform({
-  mode,
-  onColor,
-  gold,
-  reduceMotion,
-}: {
-  mode: WaveMode;
-  onColor: string;
-  gold: string;
-  reduceMotion: boolean;
-}) {
-  const [bars] = useState(() => [...Array(WAVE_BARS)].map(() => new Animated.Value(0.25)));
-  const [pulse] = useState(() => new Animated.Value(0));
-  const [width, setWidth] = useState(0);
-
-  useEffect(() => {
-    if (mode !== 'listening') {
-      bars.forEach((b) => b.setValue(0.25));
-      return;
-    }
-    const loops = bars.map((b, i) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(b, {
-            toValue: 0.45 + ((i * 7) % 5) * 0.11,
-            duration: 300 + (i % 6) * 45,
-            useNativeDriver: true,
-          }),
-          Animated.timing(b, {
-            toValue: 0.25,
-            duration: 300 + (i % 6) * 45,
-            useNativeDriver: true,
-          }),
-        ]),
-      ),
-    );
-    loops.forEach((l) => l.start());
-    return () => loops.forEach((l) => l.stop());
-  }, [mode, bars]);
-
-  useEffect(() => {
-    if (mode !== 'processing') {
-      pulse.setValue(0);
-      return;
-    }
-    if (reduceMotion) {
-      // Reduce-motion: keep the line, park the pulse near centre — no travel.
-      pulse.setValue(0.5);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.timing(pulse, {
-        toValue: 1,
-        duration: 1300,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [mode, pulse, reduceMotion]);
-
-  if (mode === 'processing') {
-    return (
-      <View style={styles.waveArea} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
-        <View style={[styles.pulseLine, { backgroundColor: `${onColor}2E` }]} />
-        <Animated.View
-          style={[
-            styles.pulseDot,
-            {
-              backgroundColor: gold,
-              transform: [
-                {
-                  translateX: pulse.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [-PULSE_W, width],
-                  }),
-                },
-              ],
-            },
-          ]}
-        />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.waveArea}>
-      {bars.map((b, i) => (
-        <Animated.View
-          key={i}
-          style={[
-            styles.waveBar,
-            {
-              backgroundColor: mode === 'ready' ? `${onColor}3D` : onColor,
-              height: 6 + taper(i) * 42,
-              transform: [{ scaleY: mode === 'ready' ? 0.1 : b }],
-            },
-          ]}
-        />
-      ))}
-    </View>
-  );
-}
-
 export default function VoiceScreen() {
   const { colors, isDark } = useTheme();
   const router = useRouter();
   const { refresh } = usePendingCount();
-
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder);
-
   const reduceMotion = useReducedMotion();
 
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [message, setMessage] = useState('Tap to speak');
+  const [phase, setPhase] = useState<Phase>('ready');
   const [result, setResult] = useState<InterpretResult | null>(null);
+  const [confirmItems, setConfirmItems] = useState<EvaluatedPending[]>([]);
+  const [capturedTranscript, setCapturedTranscript] = useState('');
   const [retryUri, setRetryUri] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [copyIndex, setCopyIndex] = useState(0);
+  const listenStartRef = useRef(0);
 
-  // Perceived-progress stage machine (cosmetic). `stage` is the logical stage
-  // the timer has advanced to; `shownStage` is what's currently rendered, and
-  // lags `stage` by one crossfade so the label/caption swap happens at 0 opacity.
-  const [stage, setStage] = useState(0);
-  const [shownStage, setShownStage] = useState(0);
-  const [fadeText] = useState(() => new Animated.Value(1));
-  const outcomeRef = useRef<Outcome | null>(null); // real result, buffered
-
-  // The pulse ring breathes while recording AND while understanding, so the
-  // processing wait doesn't feel frozen.
-  const [pulse] = useState(() => new Animated.Value(1));
   useEffect(() => {
-    if (phase !== 'recording' && phase !== 'processing') {
-      pulse.setValue(1);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.12, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [phase, pulse]);
+    primeSoundSession();
+  }, []);
 
-  // Continuous spin for the loader icon while Gemini is parsing.
-  const [spin] = useState(() => new Animated.Value(0));
-  useEffect(() => {
-    if (phase !== 'processing') {
-      spin.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.timing(spin, {
-        toValue: 1,
-        duration: 900,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [phase, spin]);
-  const spinDeg = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-
-  // ---- Backgrounding resilience --------------------------------------------
-  // Refs (not state) so the single AppState listener always sees live values
-  // without re-subscribing, and so the async parse can coordinate with it.
+  // ---- Backgrounding resilience for the Gemini call (pipeline A) -----------
   const phaseRef = useRef(phase);
-  const inFlightRef = useRef(false); // a parse request is currently running
-  const interruptedRef = useRef(false); // app went to background during a parse
-  const lastUriRef = useRef<string | null>(null); // audio of the active parse
-  const processRef = useRef<(uri: string) => Promise<void>>(async () => { });
+  const mountedRef = useRef(true);
+  const inFlightRef = useRef(false);
+  const interruptedRef = useRef(false);
+  const lastUriRef = useRef<string | null>(null);
+  const processRef = useRef<(uri: string) => Promise<void>>(async () => {});
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
 
-  const process = async (uri: string) => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
-    interruptedRef.current = false; // fresh attempt
-    outcomeRef.current = null; // discard any stale buffered result
-    lastUriRef.current = uri;
-    setPhase('processing');
-    setMessage('Understanding…');
-    try {
-      const parsed = await interpretVoice(uri);
-      refresh();
-      // Buffer the result — the stage machine lands it at a stage boundary so
-      // the processing sequence never cuts away mid-stage.
-      outcomeRef.current = { kind: 'success', result: parsed };
-      inFlightRef.current = false;
-    } catch (e) {
-      setRetryUri(uri); // keep the recording — never lose it
-
-      // If the app was backgrounded mid-request, iOS almost certainly killed
-      // the network call. Don't burn the recording on that: resume instead.
-      if (interruptedRef.current) {
+  const process = useCallback(
+    async (uri: string) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      interruptedRef.current = false;
+      lastUriRef.current = uri;
+      setCopyIndex(0);
+      setPhase('processing');
+      try {
+        const parsed = await interpretVoice(uri, AUDIO_MIME);
+        refresh();
+        const items = await evaluatePendingByIds(parsed.pendingIds);
         inFlightRef.current = false;
-        if (AppState.currentState === 'active') {
-          void process(uri); // already back in front → retry straight away
-        } else {
-          // Still away — stay in the working state; the AppState listener
-          // resumes the parse the moment we return to the foreground.
-          setMessage('Paused — resuming when you reopen Kaasu…');
+        if (!mountedRef.current) return;
+        setResult(parsed);
+        setConfirmItems(items);
+        setRetryUri(null);
+        setPhase('success');
+        playChime();
+        hapticSuccess();
+      } catch (e) {
+        setRetryUri(uri); // never lose the recording
+        // App suspended mid-request → iOS likely killed the socket. Resume
+        // instead of burning the recording on a spurious network error.
+        if (interruptedRef.current) {
+          inFlightRef.current = false;
+          if (AppState.currentState === 'active') {
+            void processRef.current(uri); // resume via ref — avoids self-reference
+          } else {
+            setErrorMsg('Paused — resuming when you reopen Kaasu…');
+          }
+          return;
         }
-        return;
+        inFlightRef.current = false;
+        if (!mountedRef.current) return;
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setPhase('error');
+        hapticError();
       }
-
-      inFlightRef.current = false;
-      outcomeRef.current = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
-    }
-  };
+    },
+    [refresh],
+  );
   useEffect(() => {
     processRef.current = process;
   });
@@ -317,8 +147,6 @@ export default function VoiceScreen() {
       if (next === 'background' || next === 'inactive') {
         if (phaseRef.current === 'processing') interruptedRef.current = true;
       } else if (next === 'active') {
-        // Resume a parse the OS interrupted while we were away. Guard on
-        // inFlightRef so we never start a second request (double-insert).
         if (
           interruptedRef.current &&
           !inFlightRef.current &&
@@ -332,67 +160,44 @@ export default function VoiceScreen() {
     return () => sub.remove();
   }, []);
 
-  // Perceived-progress stage machine. Runs only while processing: it cycles the
-  // labels on a timer, and it is the single place that lands the real result —
-  // always at a stage boundary, so the sequence finishes its current stage
-  // rather than cutting away mid-message. If the work outlasts the sequence the
-  // last stage (Saving) loops; if it finishes early we still see the current
-  // stage through before switching. Fully decoupled from the real async work.
+  // ---- Capture (pipeline B) ------------------------------------------------
+  const handleDone = useCallback((res: CaptureResult) => {
+    if (!mountedRef.current) return;
+    if (res.cancelled) {
+      setPhase('ready');
+      return;
+    }
+    if (!res.uri) {
+      setErrorMsg('That recording came through empty — give it another go.');
+      setPhase('error');
+      return;
+    }
+    setCapturedTranscript(res.transcript);
+    void processRef.current(res.uri);
+  }, []);
+  const capture = useVoiceCapture({ onDone: handleDone });
+  const { cancel: cancelCapture } = capture; // stable (useCallback) — safe dep
+
+  // Cancel any live recognition if the screen is torn down mid-listen.
+  useEffect(() => () => cancelCapture(), [cancelCapture]);
+
+  // ---- Timers / cosmetic cycles --------------------------------------------
   useEffect(() => {
-    if (phase !== 'processing') return;
-
-    // This effect runs once per fresh entry to processing (phase changes to
-    // 'processing'). A background→foreground resume keeps phase === 'processing'
-    // so the effect is NOT re-run — the original timer chain simply continues,
-    // meaning the sequence resumes where it left off rather than restarting.
-    // `stage`/`shownStage` are reset to 0 by whoever starts a fresh sequence
-    // (stopRecording / retry), so the first render already shows stage 0.
-    let current = 0;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-
-    const land = (outcome: Outcome) => {
-      if (outcome.kind === 'success') {
-        setResult(outcome.result);
-        setRetryUri(null);
-        setPhase('success');
-      } else {
-        setMessage(outcome.message);
-        setPhase('error');
-      }
-    };
-
-    const tick = () => {
-      if (cancelled) return;
-      const outcome = outcomeRef.current;
-      if (outcome) {
-        land(outcome); // current stage held its minimum — safe to switch now
-        return;
-      }
-      current = Math.min(current + 1, PROCESSING_STAGES.length - 1); // loop on last
-      setStage(current);
-      timer = setTimeout(tick, PROCESSING_STAGES[current].hold);
-    };
-
-    timer = setTimeout(tick, PROCESSING_STAGES[0].hold);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    if (phase !== 'listening') return;
+    // start time is stamped in begin(); the interval only reads it (no setState
+    // in the effect body — that would cascade renders).
+    const id = setInterval(() => setElapsedMs(Date.now() - listenStartRef.current), 250);
+    return () => clearInterval(id);
   }, [phase]);
 
-  // Crossfade the label/caption when the stage advances: fade out, swap the
-  // rendered stage at zero opacity, fade back in. Under reduce-motion this
-  // effect is a no-op — the render reads `stage` directly for an instant swap.
   useEffect(() => {
-    if (reduceMotion || stage === shownStage) return;
-    Animated.timing(fadeText, { toValue: 0, duration: 160, useNativeDriver: true }).start(() => {
-      setShownStage(stage);
-      Animated.timing(fadeText, { toValue: 1, duration: 220, useNativeDriver: true }).start();
-    });
-  }, [stage, shownStage, fadeText, reduceMotion]);
+    if (phase !== 'processing') return;
+    const id = setInterval(() => setCopyIndex((i) => (i + 1) % PROCESSING_COPY.length), 2500);
+    return () => clearInterval(id);
+  }, [phase]);
 
-  const startRecording = async () => {
+  // ---- Controls ------------------------------------------------------------
+  const begin = async () => {
     if (!(await hasGeminiApiKey())) {
       Alert.alert('No API key', 'Add your Gemini API key in Settings to log by voice.', [
         { text: 'Cancel', style: 'cancel' },
@@ -400,169 +205,174 @@ export default function VoiceScreen() {
       ]);
       return;
     }
-    const permission = await requestRecordingPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Microphone needed', 'Enable microphone access for Kaasu in iOS Settings.');
+    const outcome = await capture.start();
+    if (!outcome.ok) {
+      if (outcome.reason === 'permission') {
+        Alert.alert(
+          'Microphone & speech needed',
+          'Enable Microphone and Speech Recognition for Kaasu in iOS Settings to log by voice.',
+        );
+      } else {
+        setErrorMsg(outcome.message);
+        setPhase('error');
+      }
       return;
     }
-    try {
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      setResult(null);
-      setPhase('recording');
-      setMessage('Listening…');
-    } catch (e) {
-      setMessage(String(e));
-      setPhase('error');
-    }
+    hapticStart();
+    playStart();
+    setResult(null);
+    setConfirmItems([]);
+    setCapturedTranscript('');
+    listenStartRef.current = Date.now();
+    setElapsedMs(0);
+    setPhase('listening');
   };
 
-  // Rewind the perceived-progress sequence to stage 0 before a fresh parse, so
-  // it never opens mid-sequence. (A background resume skips this on purpose.)
-  const beginStageSequence = () => {
-    setStage(0);
-    setShownStage(0);
-    fadeText.setValue(1);
+  const done = () => {
+    hapticStop();
+    playWhoosh();
+    setCopyIndex(0);
+    setPhase('processing'); // cool the orb immediately; process() runs on onDone
+    capture.stop();
   };
 
-  const stopRecording = async () => {
-    try {
-      await recorder.stop();
-    } catch {
-      // fall through — uri may still be set
-    }
-    const uri = recorder.uri;
-    if (!uri) {
-      setMessage('Recording was empty — try again.');
-      setPhase('error');
-      return;
-    }
-    beginStageSequence();
-    await process(uri);
+  const cancel = () => {
+    capture.cancel();
+    setPhase('ready');
   };
 
   const retry = () => {
-    if (retryUri) {
-      beginStageSequence();
-      void process(retryUri);
-    }
+    if (retryUri) void process(retryUri);
   };
 
   const sayAnother = () => {
     setResult(null);
-    setPhase('idle');
-    setMessage('Tap to speak');
+    setConfirmItems([]);
+    setCapturedTranscript('');
+    setPhase('ready');
   };
 
-  const onPressButton = () => {
-    if (phase === 'recording') void stopRecording();
-    else if (phase === 'idle' || phase === 'error') void startRecording();
+  const openReview = (item: EvaluatedPending) =>
+    router.push({ pathname: '/review/[id]', params: { id: item.id } });
+  const openEditor = (item: EvaluatedPending) => {
+    if (item.op.kind === 'bill_split') {
+      router.push({ pathname: '/bill-split', params: { fromPending: item.id } });
+    } else if (item.op.kind === 'recurring') {
+      router.push({ pathname: '/recurring/new', params: { fromPending: item.id } });
+    }
   };
 
-  const recording = phase === 'recording';
-  const busy = phase === 'processing';
-
-  // ---- Confirmation — on the app background (v2 §5.5) ----------------------
+  // ---- Success — per-transaction confirm cards (design: logged state) ------
   if (phase === 'success' && result) {
-    const total = result.candidateCount + result.specializedCount;
-    const nothing = result.outcome !== 'CANDIDATES_PRESENT' || total === 0;
-    const heading = nothing ? 'Nothing logged' : total > 1 ? `${total} to review` : 'Ready to review';
+    const total = confirmItems.length;
+    const nothing = total === 0;
+    const heading = nothing ? 'Nothing logged' : total > 1 ? `${total} logged` : 'Logged';
+
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-        <View style={styles.confirmCenter}>
-          <View
-            style={[
-              styles.check,
-              { backgroundColor: nothing ? `${colors.textMuted}1F` : `${colors.income}1F` },
-            ]}>
+        <View style={styles.successHeader}>
+          <View style={[styles.check, { backgroundColor: nothing ? `${colors.textMuted}1F` : `${colors.income}1F` }]}>
             <Feather
               name={nothing ? 'help-circle' : 'check'}
-              size={34}
+              size={24}
               color={nothing ? colors.textMuted : colors.income}
             />
           </View>
-          <Text style={[type.h1, { color: colors.text }]}>{heading}</Text>
-
-          {result.transcript ? (
-            <Text style={[type.body, styles.centerText, { color: colors.textSubtle, fontStyle: 'italic' }]}>
-              “{result.transcript}”
-            </Text>
-          ) : null}
-
-          <Text style={[type.body, styles.centerText, { color: colors.textMuted }]}>
-            {nothing
-              ? 'No transaction amount was detected, so nothing was recorded. Kaasu never invents an amount.'
-              : 'Waiting in your review queue on Home. Nothing counts until you approve it — and only once every detail is filled in.'}
-          </Text>
-
-          {result.unqualifiedIntents.length > 0 ? (
-            <View style={styles.flagRow}>
-              <View style={[styles.flagPill, { borderColor: colors.warning }]}>
-                <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
-                  {result.unqualifiedIntents.length} heard without an amount
-                </Text>
-              </View>
-            </View>
-          ) : null}
-
-          <View style={styles.confirmActions}>
-            {!nothing ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => router.back()}
-                style={[styles.confirmButton, { backgroundColor: colors.positiveFill }]}>
-                <Text style={[styles.confirmLabel, { color: colors.onFilled }]}>Review in queue</Text>
-              </Pressable>
+          <View style={styles.successHeadingWrap}>
+            <Text style={[type.h1, { color: colors.text }]}>{heading}</Text>
+            {result.transcript ? (
+              <Text numberOfLines={2} style={[type.body, { color: colors.textSubtle, fontStyle: 'italic' }]}>
+                “{result.transcript}”
+              </Text>
             ) : null}
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.back()}
-              style={[
-                styles.confirmButton,
-                { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth },
-              ]}>
-              <Text style={[styles.confirmLabel, { color: colors.textMuted }]}>Done</Text>
-            </Pressable>
           </View>
         </View>
 
-        <View style={styles.sayAnotherWrap}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={sayAnother}
-            style={[styles.sayAnother, { backgroundColor: colors.surfaceAlt }]}>
-            <Feather name="mic" size={16} color={colors.primary} />
-            <Text style={[type.label, { color: colors.primary }]}>Say another</Text>
-          </Pressable>
+        <ScrollView
+          contentContainerStyle={styles.successScroll}
+          showsVerticalScrollIndicator={false}>
+          {nothing ? (
+            <Text style={[type.body, { color: colors.textMuted }]}>
+              No transaction amount was detected, so nothing was recorded. Kaasu never invents an
+              amount — try again with the number included.
+            </Text>
+          ) : (
+            confirmItems.map((item, i) => (
+              <ConfirmCard
+                key={item.id}
+                item={item}
+                baseDelay={i * 140}
+                reduceMotion={reduceMotion}
+                onApproved={refresh}
+                onOpenReview={openReview}
+                onOpenEditor={openEditor}
+              />
+            ))
+          )}
+
+          {result.unqualifiedIntents.length > 0 ? (
+            <View style={[styles.hintPill, { borderColor: colors.warning }]}>
+              <Feather name="alert-circle" size={13} color={isDark ? colors.warning : colors.lending} />
+              <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
+                {result.unqualifiedIntents.length} heard without an amount — not logged
+              </Text>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        <View style={styles.successFooter}>
+          {!nothing ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.back()}
+              style={[styles.footerBtn, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth }]}>
+              <Feather name="inbox" size={16} color={colors.text} />
+              <Text style={[styles.footerLabel, { color: colors.text }]}>Review all in queue</Text>
+            </Pressable>
+          ) : null}
+          <View style={styles.footerRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={sayAnother}
+              style={[styles.footerBtn, styles.footerFlex, { backgroundColor: colors.surfaceAlt }]}>
+              <Feather name="mic" size={16} color={colors.primary} />
+              <Text style={[styles.footerLabel, { color: colors.primary }]}>Say another</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.back()}
+              style={[styles.footerBtn, styles.footerFlex, { backgroundColor: colors.primary }]}>
+              <Text style={[styles.footerLabel, { color: colors.onPrimary }]}>Done</Text>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ---- Capture (idle / recording / processing / error) — brand surface ----
+  // ---- Capture surface (ready / listening / processing / error) ------------
   const captureBg = isDark ? colors.surface : colors.primary;
   const onCapture = isDark ? colors.text : colors.onPrimary;
   const onCaptureMuted = isDark ? colors.textMuted : `${colors.onPrimary}B3`;
-  const ringColor = isDark ? `${colors.primary}33` : `${colors.onPrimary}22`;
   const buttonBg = isDark ? colors.primary : colors.onPrimary;
   const buttonIcon = isDark ? colors.onPrimary : colors.primary;
   const gold = colors.canopyAccent;
 
-  // Under reduce-motion there's no crossfade, so render the live `stage`
-  // directly (instant swap); otherwise render `shownStage`, which lags by one
-  // fade so text swaps at zero opacity.
-  const displayStage = reduceMotion ? stage : shownStage;
-  const stageInfo = PROCESSING_STAGES[Math.min(displayStage, PROCESSING_STAGES.length - 1)];
-  const eyebrow = busy ? stageInfo.eyebrow : recording ? 'Listening' : 'Ready';
-  const heading = busy ? stageInfo.heading : recording ? 'I’m listening…' : 'What did you\nspend on?';
-  const subtitle = busy
-    ? stageInfo.caption
-    : recording
-      ? 'Tap the button below when you’re done.'
-      : 'Tap the mic and just say it — amount, place, the rest is on me.';
-
+  const listening = phase === 'listening';
+  const processing = phase === 'processing';
   const isError = phase === 'error';
+
+  const orbPhase: OrbPhase = listening ? 'listening' : processing ? 'processing' : 'ready';
+  const eyebrow = listening ? 'Listening' : 'Ready';
+  const heading = listening ? 'I’m listening…' : 'What did you\nspend on?';
+  const subtitle = listening
+    ? 'Tap the orb when you’re done.'
+    : 'Tap the orb and just say it — amount, place, the rest is on me.';
+
+  const onOrbPress = () => {
+    if (phase === 'ready') void begin();
+    else if (listening) done();
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: captureBg }]}>
@@ -570,114 +380,119 @@ export default function VoiceScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close"
-          onPress={() => router.back()}
+          onPress={() => (listening ? cancel() : router.back())}
           style={[styles.close, { backgroundColor: isDark ? colors.surfaceAlt : colors.primaryPress }]}>
           <Feather name="x" size={20} color={onCapture} />
         </Pressable>
       </View>
 
       {isError ? (
-        // ---- Failure — dashed ring, what happened, recovery pair (v2) ------
         <View style={styles.failCenter}>
           <View style={[styles.failRing, { borderColor: `${onCapture}59` }]}>
             <Feather name="alert-triangle" size={30} color={gold} />
           </View>
           <Text style={[type.sectionLabel, { color: gold }]}>Couldn’t log that</Text>
-          <Text style={[styles.hint, styles.centerText, { color: onCapture }]}>{message}</Text>
+          <Text style={[styles.failHint, styles.centerText, { color: onCapture }]}>{errorMsg}</Text>
           <Text style={[type.body, styles.centerText, { color: onCaptureMuted }]}>
             {retryUri
               ? 'Your recording is safe — try again without repeating yourself.'
               : 'Nothing was saved. Give it another go.'}
           </Text>
           <View style={styles.failActions}>
-            {retryUri ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={retry}
-                style={[styles.failPrimary, { backgroundColor: buttonBg }]}>
-                <Feather name="refresh-cw" size={16} color={buttonIcon} />
-                <Text style={[styles.confirmLabel, { color: buttonIcon }]}>Retry parsing</Text>
-              </Pressable>
-            ) : (
-              <Pressable
-                accessibilityRole="button"
-                onPress={startRecording}
-                style={[styles.failPrimary, { backgroundColor: buttonBg }]}>
-                <Feather name="mic" size={16} color={buttonIcon} />
-                <Text style={[styles.confirmLabel, { color: buttonIcon }]}>Record again</Text>
-              </Pressable>
-            )}
+            <Pressable
+              accessibilityRole="button"
+              onPress={retryUri ? retry : begin}
+              style={[styles.failPrimary, { backgroundColor: buttonBg }]}>
+              <Feather name={retryUri ? 'refresh-cw' : 'mic'} size={16} color={buttonIcon} />
+              <Text style={[styles.footerLabel, { color: buttonIcon }]}>
+                {retryUri ? 'Retry parsing' : 'Record again'}
+              </Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={() => router.back()}
               style={[styles.failSecondary, { borderColor: `${onCapture}40` }]}>
-              <Text style={[styles.confirmLabel, { color: onCapture }]}>Close</Text>
+              <Text style={[styles.footerLabel, { color: onCapture }]}>Close</Text>
             </Pressable>
           </View>
         </View>
       ) : (
         <>
           <View style={styles.instrument}>
-            <Animated.Text style={[type.sectionLabel, { color: gold, opacity: busy ? fadeText : 1 }]}>
-              {eyebrow}
-            </Animated.Text>
-            <Waveform
-              mode={busy ? 'processing' : recording ? 'listening' : 'ready'}
-              onColor={onCapture}
-              gold={gold}
-              reduceMotion={reduceMotion}
-            />
-            {recording ? (
-              <Text style={[styles.timer, { color: onCaptureMuted }]}>
-                {formatDuration(recorderState.durationMillis)}
-              </Text>
-            ) : null}
+            {!processing ? (
+              <Text style={[type.sectionLabel, { color: gold }]}>{eyebrow}</Text>
+            ) : (
+              <View style={styles.eyebrowSpacer} />
+            )}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={listening ? 'Stop recording' : 'Start recording'}
+              disabled={processing}
+              onPress={onOrbPress}>
+              <VoiceOrb phase={orbPhase} volume={capture.volume} size={240} reduceMotion={reduceMotion} />
+            </Pressable>
+
+            {listening ? (
+              <Text style={[styles.timer, { color: onCaptureMuted }]}>{formatDuration(elapsedMs)}</Text>
+            ) : (
+              <View style={styles.timerSpacer} />
+            )}
           </View>
 
-          <Animated.View style={[styles.prompt, busy && { opacity: fadeText }]}>
-            <Text style={[styles.heading, styles.centerText, { color: onCapture }]}>{heading}</Text>
-            <Text style={[styles.subtitle, styles.centerText, { color: onCaptureMuted }]}>
-              {subtitle}
-            </Text>
-          </Animated.View>
+          <View style={styles.prompt}>
+            {/* Live transcript — the trust builder. Bright while listening; a
+                dimmed strip while processing so the copy owns the space. */}
+            {listening && capture.transcript ? (
+              <Animated.Text
+                entering={reduceMotion ? undefined : FadeIn.duration(200)}
+                style={[styles.transcript, styles.centerText, { color: onCapture }]}>
+                {capture.transcript}
+              </Animated.Text>
+            ) : null}
 
-          <View style={styles.buttonArea}>
-            <View style={styles.buttonWrap}>
-              <Animated.View
-                style={[
-                  styles.ring,
-                  { backgroundColor: ringColor, transform: [{ scale: pulse }] },
-                  !(recording || busy) && styles.hidden,
-                ]}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
-                disabled={busy}
-                onPress={onPressButton}
-                style={[styles.recordButton, { backgroundColor: buttonBg }]}>
-                {busy ? (
-                  <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
-                    <Feather name="loader" size={30} color={buttonIcon} />
-                  </Animated.View>
-                ) : (
-                  <Feather name={recording ? 'square' : 'mic'} size={30} color={buttonIcon} />
-                )}
+            {processing ? (
+              <>
+                {capturedTranscript ? (
+                  <Text
+                    numberOfLines={2}
+                    style={[styles.transcriptDim, styles.centerText, { color: onCapture }]}>
+                    “{capturedTranscript}”
+                  </Text>
+                ) : null}
+                <Animated.Text
+                  key={copyIndex}
+                  entering={reduceMotion ? undefined : FadeInDown.duration(450)}
+                  style={[styles.heading, styles.centerText, { color: onCapture }]}>
+                  {PROCESSING_COPY[copyIndex]}
+                </Animated.Text>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.heading, styles.centerText, { color: onCapture }]}>{heading}</Text>
+                <Text style={[styles.subtitle, styles.centerText, { color: onCaptureMuted }]}>
+                  {subtitle}
+                </Text>
+              </>
+            )}
+          </View>
+
+          <View style={styles.footArea}>
+            {listening ? (
+              <Pressable accessibilityRole="button" onPress={cancel} hitSlop={space.md}>
+                <Text style={[type.label, { color: onCaptureMuted }]}>Cancel</Text>
               </Pressable>
-            </View>
-            <Text style={[type.label, styles.centerText, { color: onCaptureMuted }]}>
-              {recording ? 'Tap to stop' : busy ? 'Almost there…' : 'Tap to speak'}
-            </Text>
+            ) : (
+              <Text style={[type.label, styles.centerText, { color: onCaptureMuted }]}>
+                {processing ? 'Working on it…' : 'Tap to speak'}
+              </Text>
+            )}
           </View>
         </>
       )}
     </SafeAreaView>
   );
 }
-
-const RING = 96;
-const BUTTON = 74;
-const PULSE_W = 56;
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
@@ -695,55 +510,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Capture layout — three stacked regions between the header and the button.
+  // Capture layout
   instrument: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: space.lg,
-    paddingHorizontal: space.xl,
-    paddingBottom: space.xl,
+    gap: space.md,
   },
+  eyebrowSpacer: { height: 18 },
+  timerSpacer: { height: 22 },
+  timer: { ...type.amount, fontSize: 16, height: 22 },
   prompt: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: space.md,
     paddingHorizontal: space.xl,
-    paddingTop: space.sm,
+    paddingTop: space.lg,
   },
-  heading: { fontFamily: fontFamily.headingBold, fontSize: 32, lineHeight: 38 },
+  heading: { fontFamily: fontFamily.headingBold, fontSize: 30, lineHeight: 36 },
   subtitle: { ...type.body, fontSize: 16, lineHeight: 24, maxWidth: 320 },
-
-  // Waveform / instrument
-  waveArea: {
-    height: 60,
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  waveBar: { width: 3, borderRadius: radius.pill },
-  pulseLine: { position: 'absolute', left: 0, right: 0, height: 2, borderRadius: 1 },
-  pulseDot: { position: 'absolute', width: PULSE_W, height: 3, borderRadius: radius.pill },
-
-  timer: { ...type.amount, fontSize: 15 },
-
-  buttonArea: { alignItems: 'center', gap: space.md, paddingBottom: space.xxl + space.md },
-  buttonWrap: { width: RING, height: RING, alignItems: 'center', justifyContent: 'center' },
-  ring: { position: 'absolute', width: RING, height: RING, borderRadius: RING / 2 },
-  hidden: { opacity: 0 },
-  recordButton: {
-    width: BUTTON,
-    height: BUTTON,
-    borderRadius: BUTTON / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  transcript: { fontFamily: fontFamily.heading, fontSize: 22, lineHeight: 30, maxWidth: 340 },
+  transcriptDim: { fontFamily: fontFamily.body, fontSize: 15, lineHeight: 22, opacity: 0.28 },
   centerText: { textAlign: 'center' },
-  hint: { fontFamily: fontFamily.heading, fontSize: 22, lineHeight: 30 },
 
-  // Failure state
+  footArea: { alignItems: 'center', paddingBottom: space.xxl + space.md, minHeight: 40, justifyContent: 'center' },
+
+  // Failure
   failCenter: {
     flex: 1,
     alignItems: 'center',
@@ -761,6 +554,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: space.xs,
   },
+  failHint: { fontFamily: fontFamily.heading, fontSize: 22, lineHeight: 30 },
   failActions: { width: '100%', gap: space.sm + 2, paddingTop: space.md },
   failPrimary: {
     height: 50,
@@ -778,50 +572,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Confirmation
-  confirmCenter: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: space.xxl,
-    gap: space.lg,
-  },
-  check: {
-    width: 72,
-    height: 72,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loggedCard: {
-    width: '100%',
-    borderRadius: layout.cardRadius,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-  },
-  flagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, justifyContent: 'center' },
-  flagPill: {
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: space.sm,
-    paddingVertical: 1,
-  },
-  confirmActions: { flexDirection: 'row', gap: space.sm + 2, width: '100%' },
-  confirmButton: {
-    flex: 1,
-    height: 50,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confirmLabel: { fontFamily: fontFamily.heading, fontSize: 15 },
-  sayAnotherWrap: { alignItems: 'center', paddingBottom: space.xxl },
-  sayAnother: {
+  // Success
+  successHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm + 2,
+    gap: space.md,
+    paddingHorizontal: screenPaddingH,
+    paddingTop: space.sm,
+    paddingBottom: space.md,
   },
+  check: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successHeadingWrap: { flex: 1, gap: 2 },
+  successScroll: { paddingHorizontal: screenPaddingH, paddingBottom: space.xl, gap: space.md },
+  hintPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    alignSelf: 'flex-start',
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: space.sm + 2,
+    paddingVertical: 4,
+  },
+  successFooter: {
+    paddingHorizontal: screenPaddingH,
+    paddingTop: space.sm,
+    paddingBottom: space.lg,
+    gap: space.sm,
+  },
+  footerRow: { flexDirection: 'row', gap: space.sm },
+  footerFlex: { flex: 1 },
+  footerBtn: {
+    minHeight: 50,
+    borderRadius: radius.pill,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+  },
+  footerLabel: { fontFamily: fontFamily.heading, fontSize: 15 },
 });

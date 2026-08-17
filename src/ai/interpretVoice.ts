@@ -21,7 +21,10 @@ import { listPeople } from '@/db/queries/people';
 import { insertPendingOperations } from '@/db/queries/pendingOperations';
 import { getCurrencyCode, getGeminiModel } from '@/db/queries/settings';
 
-const AUDIO_MIME = 'audio/mp4';
+/** Default capture format (expo-audio recorder). The speech-recognition
+ *  capture (pipeline B) persists WAV, so the screen passes 'audio/wav'. The
+ *  interpretation logic below is identical regardless of container. */
+const DEFAULT_AUDIO_MIME = 'audio/mp4';
 
 export interface InterpretResult {
   outcome: 'CANDIDATES_PRESENT' | 'NO_TRANSACTION_VALUE_DETECTED' | 'STRUCTURALLY_INVALID';
@@ -60,7 +63,10 @@ async function loadContext(): Promise<{ resolve: ResolveContext; prompt: Interpr
   };
 }
 
-export async function interpretVoice(audioUri: string): Promise<InterpretResult> {
+export async function interpretVoice(
+  audioUri: string,
+  audioMimeType: string = DEFAULT_AUDIO_MIME,
+): Promise<InterpretResult> {
   const apiKey = await getGeminiApiKey();
   if (!apiKey) throw new Error('Add your Gemini API key in Settings first.');
 
@@ -70,7 +76,7 @@ export async function interpretVoice(audioUri: string): Promise<InterpretResult>
     apiKey,
     model,
     audioBase64: base64,
-    audioMimeType: AUDIO_MIME,
+    audioMimeType,
     context: ctx.prompt,
   });
 
