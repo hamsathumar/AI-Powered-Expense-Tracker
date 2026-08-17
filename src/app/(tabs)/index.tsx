@@ -20,6 +20,7 @@ import { QuickActions } from '@/components/QuickActions';
 import { SectionHeader } from '@/components/SectionHeader';
 import { TransactionRow } from '@/components/TransactionRow';
 import { VoiceBar } from '@/components/VoiceBar';
+import { VoiceReviewSection } from '@/components/VoiceReviewSection';
 import {
   getMonthlySummary,
   getSpendingByCategory,
@@ -158,6 +159,9 @@ export default function HomeScreen() {
 
         <View style={[styles.sheet, { backgroundColor: colors.bg }]}>
           <QuickActions />
+
+          {/* Voice review — AI-interpreted pending operations (gated approval) */}
+          <VoiceReviewSection />
 
           {/* To review — the approval queue */}
           <View style={styles.section}>

@@ -6,8 +6,8 @@
  */
 import { Feather } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -30,7 +30,9 @@ import { SegmentedControl } from '@/components/SegmentedControl';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
+import { deletePendingOperation, getPendingOperation } from '@/db/queries/pendingOperations';
 import { insertTransactionsAtomically } from '@/db/queries/transactions';
+import { buildBillSplitPrefill } from '@/ai/specializedPrefill';
 import { equalSharesMinor, generateBillSplitTransactions } from '@/domain/billSplit';
 import { formatAmount, parseAmountInput } from '@/domain/money';
 import type { Account, Category, Person } from '@/domain/types';
@@ -42,6 +44,9 @@ const ME = 'me';
 export default function BillSplitScreen() {
   const { colors } = useTheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{ fromPending?: string }>();
+  const fromPending = typeof params.fromPending === 'string' ? params.fromPending : null;
+  const prefilledRef = useRef(false);
 
   const [amountText, setAmountText] = useState('');
   const [name, setName] = useState('');
@@ -57,6 +62,8 @@ export default function BillSplitScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  // Names the AI heard for participants that are not in People yet (handoff).
+  const [unresolvedNames, setUnresolvedNames] = useState<string[]>([]);
 
   const reload = useCallback(async () => {
     const [cats, accs, ppl] = await Promise.all([
@@ -67,12 +74,31 @@ export default function BillSplitScreen() {
     setCategories(cats);
     setAccounts(accs);
     setPeople(ppl);
+    return { cats, accs, ppl };
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async load
-    reload().catch((e) => Alert.alert('Database error', String(e)));
-  }, [reload]);
+    reload()
+      .then(async ({ ppl }) => {
+        // Handoff: prefill from a pending AI Bill Split operation (once).
+        if (fromPending && !prefilledRef.current) {
+          prefilledRef.current = true;
+          const rec = await getPendingOperation(fromPending);
+          if (rec) {
+            const pre = buildBillSplitPrefill(rec.op, ppl);
+            setName(pre.name);
+            setAmountText(pre.amountText);
+            setAccountId(pre.accountId);
+            setCategoryId(pre.categoryId);
+            setParticipantIds(pre.participantIds);
+            setPayerId(pre.payerId);
+            setUnresolvedNames(pre.unresolvedNames);
+          }
+        }
+      })
+      .catch((e) => Alert.alert('Database error', String(e)));
+  }, [reload, fromPending]);
 
   const personName = (id: string) =>
     id === ME ? 'Me' : (people.find((p) => p.id === id)?.name ?? '?');
@@ -150,6 +176,8 @@ export default function BillSplitScreen() {
         return;
       }
       await insertTransactionsAtomically(rows);
+      // Handoff: consume the pending AI operation so it leaves the review queue.
+      if (fromPending) await deletePendingOperation(fromPending);
       router.back();
     } catch (e) {
       Alert.alert('Split failed', String(e));
@@ -208,6 +236,11 @@ export default function BillSplitScreen() {
                 <Text style={[type.label, { color: colors.primary }]}>Add</Text>
               </Pressable>
             </View>
+            {unresolvedNames.length > 0 ? (
+              <Text style={[type.caption, { color: colors.warning }]}>
+                Heard but not in People yet: {unresolvedNames.join(', ')} — tap Add to include them.
+              </Text>
+            ) : null}
             {participantIds.length === 0 ? (
               <Text style={[type.caption, { color: colors.textSubtle }]}>
                 No participants yet — tap Add.

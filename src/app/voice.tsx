@@ -1,9 +1,12 @@
 /**
  * Voice capture (spec §8.3, design-system-v2.md §5.5) — the app's signature
- * interaction. Tap to record; stopping sends the audio to Gemini, validates,
- * and drops a pending transaction into the queue. Speed is the point: no
- * confirmation dialog before logging, and a failure keeps the recording so
- * nothing spoken is lost (technical-plan §5.7).
+ * interaction. Tap to record; stopping sends the audio to the Transaction AI
+ * V1 pipeline (src/ai/interpretVoice.ts): Gemini interprets, the app validates,
+ * resolves entities, and drops application-owned PENDING OPERATIONS into the
+ * Voice review queue on Home. Nothing is committed here and nothing is
+ * auto-approved — approval happens later behind the deterministic safety gate.
+ * A grounded amount is required to create anything; "no amount" logs nothing.
+ * A failure keeps the recording so nothing spoken is lost (technical-plan §5.7).
  *
  * The capture screen is a full-bleed brand surface (brown in light; the
  * neutral dark surface in dark, per v2 §2.8). It reads as a single instrument
@@ -37,14 +40,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, AppState, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { logVoiceTransaction, type VoiceResult } from '@/ai/parseVoice';
+import { interpretVoice, type InterpretResult } from '@/ai/interpretVoice';
 import { hasGeminiApiKey } from '@/ai/secureConfig';
-import { TransactionRow } from '@/components/TransactionRow';
-import {
-  listPendingTransactionItems,
-  setTransactionStatus,
-  type TransactionListItem,
-} from '@/db/queries/transactions';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { usePendingCount } from '@/state/PendingCount';
 import { useTheme } from '@/theme/ThemeContext';
@@ -80,7 +77,7 @@ const PROCESSING_STAGES = [
 /** The real async result, buffered so it lands only at a stage boundary — never
  *  mid-stage (see the stage-sequencing effect). */
 type Outcome =
-  | { kind: 'success'; result: VoiceResult; loggedItem: TransactionListItem | null }
+  | { kind: 'success'; result: InterpretResult }
   | { kind: 'error'; message: string };
 
 /** Cosine window so the row of bars reads as a tapered *shape* (short at the
@@ -214,8 +211,7 @@ export default function VoiceScreen() {
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState('Tap to speak');
-  const [result, setResult] = useState<VoiceResult | null>(null);
-  const [loggedItem, setLoggedItem] = useState<TransactionListItem | null>(null);
+  const [result, setResult] = useState<InterpretResult | null>(null);
   const [retryUri, setRetryUri] = useState<string | null>(null);
 
   // Perceived-progress stage machine (cosmetic). `stage` is the logical stage
@@ -285,13 +281,11 @@ export default function VoiceScreen() {
     setPhase('processing');
     setMessage('Understanding…');
     try {
-      const parsed = await logVoiceTransaction(uri);
-      const items = await listPendingTransactionItems();
-      const item = items.find((i) => i.tx.id === parsed.id) ?? null;
+      const parsed = await interpretVoice(uri);
       refresh();
       // Buffer the result — the stage machine lands it at a stage boundary so
       // the processing sequence never cuts away mid-stage.
-      outcomeRef.current = { kind: 'success', result: parsed, loggedItem: item };
+      outcomeRef.current = { kind: 'success', result: parsed };
       inFlightRef.current = false;
     } catch (e) {
       setRetryUri(uri); // keep the recording — never lose it
@@ -360,7 +354,6 @@ export default function VoiceScreen() {
     const land = (outcome: Outcome) => {
       if (outcome.kind === 'success') {
         setResult(outcome.result);
-        setLoggedItem(outcome.loggedItem);
         setRetryUri(null);
         setPhase('success');
       } else {
@@ -417,7 +410,6 @@ export default function VoiceScreen() {
       await recorder.prepareToRecordAsync();
       recorder.record();
       setResult(null);
-      setLoggedItem(null);
       setPhase('recording');
       setMessage('Listening…');
     } catch (e) {
@@ -459,16 +451,8 @@ export default function VoiceScreen() {
 
   const sayAnother = () => {
     setResult(null);
-    setLoggedItem(null);
     setPhase('idle');
     setMessage('Tap to speak');
-  };
-
-  const approveNow = async () => {
-    if (!result) return;
-    await setTransactionStatus(result.id, 'approved');
-    refresh();
-    router.back();
   };
 
   const onPressButton = () => {
@@ -479,52 +463,66 @@ export default function VoiceScreen() {
   const recording = phase === 'recording';
   const busy = phase === 'processing';
 
-  // ---- Confirmation ("Logged") — on the app background (v2 §5.5) ----------
+  // ---- Confirmation — on the app background (v2 §5.5) ----------------------
   if (phase === 'success' && result) {
+    const total = result.candidateCount + result.specializedCount;
+    const nothing = result.outcome !== 'CANDIDATES_PRESENT' || total === 0;
+    const heading = nothing ? 'Nothing logged' : total > 1 ? `${total} to review` : 'Ready to review';
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
         <View style={styles.confirmCenter}>
-          <View style={[styles.check, { backgroundColor: `${colors.income}1F` }]}>
-            <Feather name="check" size={34} color={colors.income} />
+          <View
+            style={[
+              styles.check,
+              { backgroundColor: nothing ? `${colors.textMuted}1F` : `${colors.income}1F` },
+            ]}>
+            <Feather
+              name={nothing ? 'help-circle' : 'check'}
+              size={34}
+              color={nothing ? colors.textMuted : colors.income}
+            />
           </View>
-          <Text style={[type.h1, { color: colors.text }]}>Logged</Text>
+          <Text style={[type.h1, { color: colors.text }]}>{heading}</Text>
 
-          {loggedItem ? (
-            <View style={[styles.loggedCard, { borderColor: colors.border }]}>
-              <TransactionRow item={loggedItem} />
-            </View>
-          ) : (
-            <Text style={[type.h2, styles.centerText, { color: colors.text }]}>“{result.name}”</Text>
-          )}
-
-          {result.flags.length > 0 ? (
-            <View style={styles.flagRow}>
-              {result.flags.map((flag) => (
-                <View key={flag} style={[styles.flagPill, { borderColor: colors.warning }]}>
-                  <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
-                    {flag.replaceAll('_', ' ')}
-                  </Text>
-                </View>
-              ))}
-            </View>
+          {result.transcript ? (
+            <Text style={[type.body, styles.centerText, { color: colors.textSubtle, fontStyle: 'italic' }]}>
+              “{result.transcript}”
+            </Text>
           ) : null}
 
           <Text style={[type.body, styles.centerText, { color: colors.textMuted }]}>
-            Waiting in your queue on Home. Nothing is counted until you approve it.
+            {nothing
+              ? 'No transaction amount was detected, so nothing was recorded. Kaasu never invents an amount.'
+              : 'Waiting in your review queue on Home. Nothing counts until you approve it — and only once every detail is filled in.'}
           </Text>
 
+          {result.unqualifiedIntents.length > 0 ? (
+            <View style={styles.flagRow}>
+              <View style={[styles.flagPill, { borderColor: colors.warning }]}>
+                <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
+                  {result.unqualifiedIntents.length} heard without an amount
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
           <View style={styles.confirmActions}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={approveNow}
-              style={[styles.confirmButton, { backgroundColor: colors.positiveFill }]}>
-              <Text style={[styles.confirmLabel, { color: colors.onFilled }]}>Approve now</Text>
-            </Pressable>
+            {!nothing ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.back()}
+                style={[styles.confirmButton, { backgroundColor: colors.positiveFill }]}>
+                <Text style={[styles.confirmLabel, { color: colors.onFilled }]}>Review in queue</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               onPress={() => router.back()}
-              style={[styles.confirmButton, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth }]}>
-              <Text style={[styles.confirmLabel, { color: colors.textMuted }]}>Review later</Text>
+              style={[
+                styles.confirmButton,
+                { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth },
+              ]}>
+              <Text style={[styles.confirmLabel, { color: colors.textMuted }]}>Done</Text>
             </Pressable>
           </View>
         </View>

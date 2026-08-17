@@ -148,6 +148,33 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // Transaction AI V1: application-owned pending store for AI-interpreted
+    // operations. Kept SEPARATE from `transactions` (the authoritative ledger)
+    // so an AI operation with unresolved account/category can exist as a
+    // reviewable pending item WITHOUT ever polluting the ledger. Rows here are
+    // committed into `transactions` (as approved) only after the final safety
+    // gate passes; nothing here is a financial record.
+    version: 4,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE pending_operations (
+          id              TEXT PRIMARY KEY,
+          kind            TEXT NOT NULL,   -- income|expense|transfer|lending|bill_split|recurring
+          operation       TEXT NOT NULL,  -- underlying ordinary type
+          name            TEXT NOT NULL,
+          amount          INTEGER NOT NULL CHECK (amount > 0),
+          transcript      TEXT,
+          date_expression TEXT,
+          has_conflicts   INTEGER NOT NULL DEFAULT 0,
+          payload         TEXT NOT NULL,  -- JSON ResolvedOperation (incl. user edits)
+          created_at      TEXT NOT NULL,
+          updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX idx_pending_ops_created ON pending_operations(created_at);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {
