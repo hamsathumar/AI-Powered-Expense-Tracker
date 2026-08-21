@@ -146,9 +146,14 @@ export default function ReviewOperationScreen() {
   const addPersonFromReference = async () => {
     const name = op.person?.reference?.trim();
     if (!name) return;
-    const person = await createPerson(name, false);
-    setPeople((p) => [...p, person]);
-    patch({ person: resolvedRef(person.id, person.name) });
+    try {
+      const person = await createPerson(name, false);
+      setPeople((p) => [...p, person]);
+      patch({ person: resolvedRef(person.id, person.name) });
+    } catch (e) {
+      // The DB-boundary guard rejected it (TC-026). Say so instead of failing silently.
+      Alert.alert('Could not add person', e instanceof Error ? e.message : String(e));
+    }
   };
 
   const save = async () => {

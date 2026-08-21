@@ -1,7 +1,27 @@
 import * as Crypto from 'expo-crypto';
 
+import { isSuspiciousEntityReference } from '@/ai/interpretation/injection';
 import { getDb } from '@/db/client';
 import type { Person } from '@/domain/types';
+
+/**
+ * The last containment boundary for TC-026: an injected phrase reached the
+ * People table and became durable, reusable application state. Validation now
+ * drops such references long before this point, but People is the one place
+ * AI-heard text can become permanent, so the check is repeated HERE — where
+ * the write actually happens — rather than trusted to every call site.
+ *
+ * Applies to manual entry too: a name is a short label, and nothing that reads
+ * as an instruction belongs in it.
+ */
+function assertUsablePersonName(name: string): string {
+  const trimmed = name.trim().replace(/\s+/g, ' ');
+  if (trimmed.length === 0) throw new Error('A person needs a name.');
+  if (isSuspiciousEntityReference(trimmed)) {
+    throw new Error('That does not look like a person\u2019s name. Use a short name, not a phrase.');
+  }
+  return trimmed;
+}
 
 interface PersonRow {
   id: string;
@@ -20,17 +40,18 @@ function fromRow(row: PersonRow): Person {
 }
 
 export async function createPerson(name: string, unresolved = false): Promise<Person> {
+  const safeName = assertUsablePersonName(name);
   const db = await getDb();
   const id = Crypto.randomUUID();
   const createdAt = new Date().toISOString();
   await db.runAsync(
     'INSERT INTO people (id, name, unresolved, created_at) VALUES (?, ?, ?, ?)',
     id,
-    name,
+    safeName,
     unresolved ? 1 : 0,
     createdAt,
   );
-  return { id, name, unresolved, createdAt };
+  return { id, name: safeName, unresolved, createdAt };
 }
 
 export async function listPeople(): Promise<Person[]> {
@@ -46,8 +67,9 @@ export async function getPerson(id: string): Promise<Person | null> {
 }
 
 export async function renamePerson(id: string, name: string): Promise<void> {
+  const safeName = assertUsablePersonName(name);
   const db = await getDb();
-  await db.runAsync('UPDATE people SET name = ?, unresolved = 0 WHERE id = ?', name, id);
+  await db.runAsync('UPDATE people SET name = ?, unresolved = 0 WHERE id = ?', safeName, id);
 }
 
 /** How many transactions reference this person (any status). Used to block a

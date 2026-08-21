@@ -12,7 +12,7 @@
  *
  * Pure and unit-testable.
  */
-import { resolveDateExpression } from '@/ai/interpretation/dates';
+import { resolveDateExpression, resolveRecurrenceEnd } from '@/ai/interpretation/dates';
 import type { ResolvedOperation } from '@/ai/interpretation/types';
 import { formatMinorUnits } from '@/domain/money';
 import type { RecurringFrequency, RecurringTemplate } from '@/domain/types';
@@ -88,6 +88,41 @@ function mapFrequency(hint: string | undefined): RecurringFrequency {
   return hint === 'weekly' || hint === 'daily' || hint === 'monthly' ? hint : 'monthly';
 }
 
+/** The recurring payload, or null when this operation is not a recurring one. */
+function recurringPayload(op: ResolvedOperation) {
+  return op.specialized && op.specialized.kind === 'recurring' ? op.specialized : null;
+}
+
+/**
+ * TC-025: turn the user's stated end condition ("for the next 3 months") into
+ * the `endDate` the editor's "Ends" field reads. App-owned arithmetic — the
+ * model only supplied the wording. Returns null when nothing was stated or the
+ * wording could not be understood (the caller surfaces the latter).
+ */
+export function resolveRecurringEnd(op: ResolvedOperation, now: Date) {
+  const rec = recurringPayload(op);
+  const anchor = resolveDateExpression(rec?.anchorDate.expression ?? null, now);
+  return resolveRecurrenceEnd({
+    endExpression: rec?.endExpression ?? null,
+    occurrenceCount: rec?.occurrenceCount ?? null,
+    frequency: mapFrequency(rec?.intervalHint),
+    anchor: new Date(anchor.iso),
+  });
+}
+
+/**
+ * A user-facing note when the user clearly stated an end condition that the
+ * app could not translate into a date. Better to say so than to silently leave
+ * "Ends: Never" selected — that silence was the TC-025 failure.
+ */
+export function recurringEndNote(op: ResolvedOperation, now: Date): string | null {
+  const rec = recurringPayload(op);
+  if (!rec?.endExpression) return null;
+  const end = resolveRecurringEnd(op, now);
+  if (end.resolved) return null;
+  return `You said “${rec.endExpression}”, but Kaasu could not turn that into an end date. Set “Ends” yourself before saving.`;
+}
+
 /**
  * Build a synthetic `RecurringTemplate` used ONLY as `initial` prefill for the
  * existing `RecurringForm`. The form always constructs a fresh
@@ -95,7 +130,7 @@ function mapFrequency(hint: string | undefined): RecurringFrequency {
  * never persisted.
  */
 export function buildRecurringInitial(op: ResolvedOperation, now: Date): RecurringTemplate {
-  const rec = op.specialized && op.specialized.kind === 'recurring' ? op.specialized : null;
+  const rec = recurringPayload(op);
   const anchor = resolveDateExpression(rec?.anchorDate.expression ?? null, now);
   const resolvedId = (r: ResolvedOperation['account']) => (r?.status === 'resolved' ? (r.id ?? undefined) : undefined);
 
@@ -112,7 +147,9 @@ export function buildRecurringInitial(op: ResolvedOperation, now: Date): Recurri
     frequency: mapFrequency(rec?.intervalHint),
     intervalDays: undefined,
     nextDueDate: anchor.iso.slice(0, 10), // 'yyyy-MM-dd'
-    endDate: undefined,
+    // TC-025: a stated duration now prefills "Ends: On date" instead of
+    // silently defaulting to "Never".
+    endDate: resolveRecurringEnd(op, now).endDate ?? undefined,
     status: 'active',
     pausedUntil: undefined,
     recurringGroup: 'other',

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildRecurringInitial } from '@/ai/specializedPrefill';
+import { buildRecurringInitial, recurringEndNote } from '@/ai/specializedPrefill';
 import { RecurringForm } from '@/components/RecurringForm';
 import { createTemplate } from '@/db/queries/recurring';
 import { deletePendingOperation, getPendingOperation } from '@/db/queries/pendingOperations';
@@ -25,7 +25,13 @@ export default function NewRecurringScreen() {
     if (!fromPending) return;
     getPendingOperation(fromPending)
       .then((rec) => {
-        if (rec) setInitial(buildRecurringInitial(rec.op, new Date()));
+        if (rec) {
+          const now = new Date();
+          setInitial(buildRecurringInitial(rec.op, now));
+          // TC-025: never leave a stated-but-unparsed end condition silent.
+          const note = recurringEndNote(rec.op, now);
+          if (note) Alert.alert('Check the end date', note);
+        }
         setReady(true);
       })
       .catch((e) => {

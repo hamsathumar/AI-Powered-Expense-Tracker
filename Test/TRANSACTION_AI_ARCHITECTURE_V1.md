@@ -13,6 +13,13 @@ Two labels are used throughout and never blurred:
 
 ---
 
+> **AMENDED — V1.1 (2026-08-21).** The second real-world test round
+> (`Test/AI_TEST_CASE_LOG_v2.md`, TC-021…TC-027) confirmed the seven-layer
+> architecture and every safety boundary in it. Five sections gained amendment
+> blocks — §4, §15, §16, §21, §22 — covering duplicate suppression, recurrence
+> end conditions, entity containment, and durable interpretation jobs. Full
+> reasoning: `Test/TRANSACTION_AI_V1_1_AMENDMENTS.md`.
+
 ## 0. The one-line thesis
 
 > **Gemini must not produce a database-shaped transaction. It produces an untrusted *Transaction Interpretation*. The application validates it, resolves entities, builds application-owned pending operations, and commits only after a deterministic final safety gate.**
@@ -100,6 +107,31 @@ Authority increases left→right; **trust in the model is confined to Layer 2's 
 - the **application context** the interpreter needs to *reference* existing entities by name (account/category/people name lists, currency).
 
 **Must never do:** decide transaction type, amount, category, account, Bill Split, or recurrence. The capture layer is a courier, not a decision-maker.
+
+> **V1.1 AMENDMENT F — the courier's parcel must be DURABLE.** *(TC-027.)*
+> V1 specified what the capture layer supplies but not how long that survives.
+> In practice the whole interpretation lived in the voice screen's React
+> state, so the work was only as durable as that screen: navigating away
+> abandoned it, and the app being killed lost the recording outright.
+>
+> A capture is now **persisted as a job before any network call** (`voice_jobs`,
+> migration 5) and drained by an app-level runner mounted above the router:
+> ```
+> capture → voice_jobs row → runner (root-level, foreground-driven)
+>         → interpretation → pending_operations → gate → ledger
+> ```
+> The runner resumes anything unfinished on the next foreground — including
+> after the app was killed — and distinguishes "the platform suspended us
+> mid-request" (retry, no attempt consumed) from a genuine failure.
+>
+> This changes **durability only**. A job still produces `pending_operations`
+> and nothing else; the approval boundary is untouched.
+>
+> **Stated limitation, so this document does not overclaim:** this is not true
+> iOS background execution. A suspended app runs no JavaScript and Expo SDK 57
+> exposes no `beginBackgroundTask` equivalent. The guarantee is that work is
+> never *lost* and never depends on a particular screen — not that it
+> completes while the app is away. *(Amendments §6.)*
 
 ---
 
@@ -310,6 +342,23 @@ The **application owns split allocation/rounding math**; Gemini performs no auth
 
 **CURRENT STATE:** no AI path to Bill Split; `billSplit.ts` exists but is manual-only. Explicit split utterances are flattened to a single expense (TC-003).
 
+> **V1.1 AMENDMENT A — deterministic duplicate suppression.** *(TC-021.)*
+> V1 assumed the failure mode was *under*-production (a split flattened into
+> one expense). The observed failure was the opposite: the model emitted the
+> same Rs900 as a Bill Split **and** as an independent expense candidate, and
+> both became real pending rows.
+>
+> A de-duplication step now runs **after validation, before anything is
+> queued**: an ordinary candidate is suppressed when a specialized operation
+> from the same utterance matches on amount, operation type **and** category
+> reference. Deliberately narrow — "Rs900 food split" plus "Rs900 petrol"
+> survives as two operations. Suppression is recorded in the interpretation's
+> `issues`, never silent.
+>
+> Placement matters: this is an **application** step, not a prompt rule. The
+> prompt also carries the instruction, but the guarantee is deterministic.
+> *(Amendments §1.)*
+
 ---
 
 ## 16. Recurring Transaction Branch (specialized)
@@ -335,6 +384,24 @@ Application recurrence engine             (owns scheduling + occurrence generati
 - Gemini does **not** own scheduling, future-occurrence generation, or automatic posting. Each generated occurrence re-enters the pending/approval boundary (RC-6, AP-5).
 
 **CURRENT STATE:** no recurrence in the AI contract; explicit "recurring expense" flattened to one-time (TC-002). A deterministic recurrence engine (`recurring.ts`) already exists and is the right owner for execution.
+
+> **V1.1 AMENDMENT E — the recurrence branch carries an END.** *(TC-025.)*
+> V1 modelled a recurrence as a **start plus a cadence**. A recurrence the user
+> bounded is a start, a cadence **and an end** — and V1 had nowhere to put it,
+> so "for the next 3 months" was dropped and the template defaulted to
+> `Ends: Never`.
+>
+> The branch is extended, following the V1 date architecture (§17) exactly:
+> ```
+> AI: endExpression / occurrenceCount   (wording only — never a date)
+>     ↓
+> Application: resolveRecurrenceEnd()   (app-owned arithmetic)
+>     ↓
+> Recurring editor: "Ends → On date" prefilled
+> ```
+> A stated bound the application **cannot** parse is surfaced to the user
+> rather than defaulting to "Never" — silence was the failure. Amendment A
+> (duplicate suppression) applies to this branch too. *(Amendments §5.)*
 
 ---
 
@@ -428,6 +495,35 @@ Because obey/resist is ultimately model behaviour (audit finding: TC-016 resiste
 
 **CURRENT STATE:** instructions + audio share one untrusted `contents` turn (`gemini.ts:39-47`); resistance is content-dependent and there is no downstream security validation.
 
+> **V1.1 AMENDMENT C — containment extends to PERSISTENCE.** *(TC-026,
+> Critical; TC-022.)*
+> V1's boundary held exactly as designed — no injected instruction was ever
+> executed. What V1 did not anticipate is that injected text does not need to
+> be *executed* to do damage; it only needs to be **stored**.
+>
+> An injected phrase was emitted as a person reference, offered by the review
+> screen as `+ Add "…"`, and persisted as a Person entity. It then appeared in
+> the People list for reuse in every future split and lending transaction.
+> Every other injection finding was confined to one rejectable queue item;
+> this one escaped into durable application state.
+>
+> The architectural gap: V1's entity-resolution layer (§10) recognised only
+> `resolved` / `unresolved` / `ambiguous`. It had no concept of a reference
+> that is **unusable** — one that must not be matched, offered, or stored.
+>
+> Defence is now layered, any one layer sufficient:
+> ```
+> 1. Prompt            — a person ref must be a plausible human name
+> 2. Validation        — drop unusable refs before resolution (+ blocking conflict)
+> 3. Persistence guard — createPerson / renamePerson reject them outright
+> ```
+> Layer 3 is the important addition: it sits at the **write**, so no call
+> site — present or future — can bypass it.
+>
+> Detection was also made shape-based rather than phrase-literal (TC-022: the
+> V1 marker missed "ignore all **your** previous instructions"), and injected
+> text may no longer be carried into a transaction name. *(Amendments §2, §3.)*
+
 ---
 
 ## 22. Failure / Rejection Architecture
@@ -443,6 +539,20 @@ Because obey/resist is ultimately model behaviour (audit finding: TC-016 resiste
 | `COMMITTED` | Passed the final gate; written to SQLite | — | Done |
 
 **Critical distinction:** "**no transaction value**" (never reaches the queue) vs "**transaction exists but is incomplete**" (reaches the queue, cannot necessarily be approved). Conflating these is the current bug (amount-less inputs either fabricate or hard-stop inconsistently).
+
+> **V1.1 AMENDMENT F — a platform interruption is not a failure.** *(TC-027.)*
+> A third category sits alongside the two above: work that neither succeeded
+> nor failed because **the operating system took the app away mid-request**.
+>
+> | Outcome | Meaning | Attempt consumed? |
+> |---|---|---|
+> | `INTERRUPTED` | The app was suspended while the request was in flight | **No** — retried for free on the next foreground |
+> | `FAILED` | A genuine error (network, API key, malformed response) | Yes — 3 attempts, then stop and keep the recording |
+>
+> Conflating these was the V1 behaviour and it is user-hostile in both
+> directions: it burns a good recording on a spurious "network error", and it
+> hides a real failure behind an endless retry. The recording is retained in
+> every case. *(Amendments §6.)*
 
 ---
 

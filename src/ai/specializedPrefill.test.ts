@@ -9,7 +9,12 @@ import { describe, expect, it } from '@jest/globals';
 import { evaluateApproval } from './interpretation/gate';
 import { resolveSpecialized, type ResolveContext } from './interpretation/resolve';
 import { validateInterpretation } from './interpretation/validate';
-import { buildBillSplitPrefill, buildRecurringInitial, ME } from './specializedPrefill';
+import {
+  buildBillSplitPrefill,
+  buildRecurringInitial,
+  ME,
+  recurringEndNote,
+} from './specializedPrefill';
 
 const ctx: ResolveContext = {
   accounts: [
@@ -150,5 +155,67 @@ describe('Recurring prefill handoff', () => {
     });
     const init = buildRecurringInitial(resolveSpecialized(v.specializedOperations[0]!, ctx), new Date());
     expect(init.frequency).toBe('monthly'); // conservative default; user edits
+  });
+});
+
+// ── TC-025 — a stated duration must reach the editor's "Ends" field ──────
+describe('TC-025 — recurring end condition reaches the editor', () => {
+  const now = new Date('2026-08-21T12:00:00Z');
+
+  function recurringWith(extra: Record<string, unknown>) {
+    const v = validateInterpretation({
+      transcript:
+        'Record a recurring transaction of 394 rupees 33 cents for the next 3 months from my Commercial Bank',
+      specializedOperations: [
+        {
+          operationKind: 'recurring',
+          operation: 'expense',
+          baseAmount: userAmount('394 rupees 33 cents', 394.33),
+          intervalHint: 'monthly',
+          anchorDateExpression: { expression: 'today', kind: 'relative' },
+          evidenceStrength: 'clear',
+          recurringEvidence: [{ sourceText: 'recurring transaction', supports: 'recurrence' }],
+          account: { reference: 'Commercial Bank', provenance: 'USER_EXPLICIT', state: 'KNOWN' },
+          name: 'phone back cover purchase',
+          ...extra,
+        },
+      ],
+    });
+    return resolveSpecialized(v.specializedOperations[0]!, ctx);
+  }
+
+  it('prefills "Ends: On date" instead of leaving "Never" selected (the observed failure)', () => {
+    const init = buildRecurringInitial(recurringWith({ endExpression: 'for the next 3 months' }), now);
+    expect(init.nextDueDate).toBe('2026-08-21');
+    expect(init.endDate).toBe('2026-10-21'); // 3 monthly payments, inclusive
+    expect(init.amountMinor).toBe(39433);
+    expect(init.accountId).toBe('acc-cb');
+  });
+
+  it('title-cases the name on the way through, without changing the schedule', () => {
+    const init = buildRecurringInitial(recurringWith({ endExpression: 'for the next 3 months' }), now);
+    expect(init.name).toBe('Phone Back Cover Purchase');
+    expect(init.frequency).toBe('monthly');
+  });
+
+  it('leaves endDate undefined when the user stated no end — unchanged behaviour', () => {
+    const init = buildRecurringInitial(recurringWith({}), now);
+    expect(init.endDate).toBeUndefined();
+  });
+
+  it('leaves endDate undefined when the user explicitly said it never ends', () => {
+    const init = buildRecurringInitial(recurringWith({ endExpression: 'until I cancel' }), now);
+    expect(init.endDate).toBeUndefined();
+    expect(recurringEndNote(recurringWith({ endExpression: 'until I cancel' }), now)).toBeNull();
+  });
+
+  it('warns rather than silently defaulting when the wording cannot be understood', () => {
+    const op = recurringWith({ endExpression: 'until things settle down' });
+    expect(buildRecurringInitial(op, now).endDate).toBeUndefined();
+    expect(recurringEndNote(op, now)).toMatch(/could not turn that into an end date/);
+  });
+
+  it('says nothing when there was no end condition to resolve', () => {
+    expect(recurringEndNote(recurringWith({}), now)).toBeNull();
   });
 });

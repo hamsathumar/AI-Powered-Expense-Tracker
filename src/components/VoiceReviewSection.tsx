@@ -13,15 +13,15 @@
  */
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Amount } from '@/components/Amount';
 import {
   commitPendingOperation,
   evaluateAllPending,
   type EvaluatedPending,
 } from '@/ai/commitOperation';
+import { Amount } from '@/components/Amount';
 import { deletePendingOperation } from '@/db/queries/pendingOperations';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, layout, minTouchTarget, radius, space, type } from '@/theme/tokens';
@@ -45,12 +45,25 @@ function metaLine(item: EvaluatedPending): string {
   return parts.join(' · ');
 }
 
-interface Props {
-  /** Reports the current pending-operation count to Home (shared header/empty). */
-  onCountChange?: (n: number) => void;
+/**
+ * What Home needs to drive the shared header. `approvable` is reported
+ * separately because a bulk "Approve all" can only commit operations that pass
+ * the final gate — a blocked or specialized operation stays in the queue, and
+ * the button must not claim otherwise.
+ */
+export interface VoiceReviewCounts {
+  total: number;
+  approvable: number;
 }
 
-export function VoiceReviewSection({ onCountChange }: Props) {
+interface Props {
+  /** Reports the current pending-operation counts to Home (shared header/empty). */
+  onCountChange?: (counts: VoiceReviewCounts) => void;
+  /** Bumped by Home after a bulk approve, to force a reload without a re-focus. */
+  refreshToken?: number;
+}
+
+export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
   const { colors, isDark } = useTheme();
   const router = useRouter();
   const [items, setItems] = useState<EvaluatedPending[]>([]);
@@ -63,7 +76,25 @@ export function VoiceReviewSection({ onCountChange }: Props) {
   useFocusEffect(reload);
 
   // Keep Home's shared badge / empty-state in sync (effect, not during render).
-  useEffect(() => onCountChange?.(items.length), [items, onCountChange]);
+  useEffect(
+    () =>
+      onCountChange?.({
+        total: items.length,
+        approvable: items.filter((i) => i.gate.approvable).length,
+      }),
+    [items, onCountChange],
+  );
+
+  // Home bulk-approves through its own action, which does not re-focus this
+  // screen — so it bumps `refreshToken` to pull the committed rows out of view.
+  const mountedOnce = useRef(false);
+  useEffect(() => {
+    if (!mountedOnce.current) {
+      mountedOnce.current = true;
+      return; // useFocusEffect already did the initial load
+    }
+    reload();
+  }, [refreshToken, reload]);
 
   const isSpecialized = (item: EvaluatedPending) =>
     item.op.kind === 'bill_split' || item.op.kind === 'recurring';

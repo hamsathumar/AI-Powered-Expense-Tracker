@@ -131,6 +131,13 @@ export interface RecurringOperation {
   recurrenceExpression: string | null;
   intervalHint: IntervalHint;
   anchorDate: DateExpr;
+  /** Raw end-condition wording the user spoke ("for the next 3 months",
+   *  "until December", "for 6 payments"). An EXPRESSION only — the app
+   *  resolves it to a real end date (TC-025). */
+  endExpression: string | null;
+  /** A stated number of occurrences, when the user gave a count rather than a
+   *  duration. Null when unstated. */
+  occurrenceCount: number | null;
   evidenceStrength: EvidenceStrength;
   account: EntityRef | null;
   toAccount: EntityRef | null;

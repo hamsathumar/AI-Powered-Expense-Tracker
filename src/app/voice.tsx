@@ -16,27 +16,33 @@
  * loops until Gemini actually returns), NOT a scripted timeline. Haptics + short
  * sound cues punctuate start / stop / logged.
  *
- * Backgrounding resilience (kept from v1): iOS kills an in-flight network
- * request when suspended, so a parse interrupted by backgrounding is retained
- * and resumed on return to the foreground rather than surfaced as a failure.
+ * Backgrounding resilience (v1.1, TC-027): this screen NO LONGER owns the
+ * parse. A capture is handed to the durable job queue
+ * (src/db/queries/voiceJobs.ts + src/ai/voiceJobRunner.ts), which runs above
+ * the router — so the work survives leaving this screen, survives iOS
+ * suspending the app, and survives the app being killed outright. The screen
+ * simply WATCHES its job and renders the same states as before; if the user
+ * walks away, the result lands in the queue and a local notification says so.
  */
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { evaluatePendingByIds, type EvaluatedPending } from '@/ai/commitOperation';
-import { interpretVoice, type InterpretResult } from '@/ai/interpretVoice';
 import { hasGeminiApiKey } from '@/ai/secureConfig';
+import type { VoiceJob } from '@/db/queries/voiceJobs';
 import { ConfirmCard } from '@/components/voice/ConfirmCard';
 import { VoiceOrb, type OrbPhase } from '@/components/voice/VoiceOrb';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useVoiceCapture, type CaptureResult } from '@/hooks/useVoiceCapture';
 import { hapticError, hapticStart, hapticStop, hapticSuccess } from '@/lib/haptics';
 import { playChime, playStart, playWhoosh, primeSoundSession } from '@/lib/soundFx';
+import { ensureNotificationPermission } from '@/lib/notifications';
 import { usePendingCount } from '@/state/PendingCount';
+import { useVoiceJob, useVoiceJobs } from '@/state/VoiceJobs';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, radius, screenPaddingH, space, type } from '@/theme/tokens';
 
@@ -66,7 +72,6 @@ export default function VoiceScreen() {
   const reduceMotion = useReducedMotion();
 
   const [phase, setPhase] = useState<Phase>('ready');
-  const [result, setResult] = useState<InterpretResult | null>(null);
   const [confirmItems, setConfirmItems] = useState<EvaluatedPending[]>([]);
   const [capturedTranscript, setCapturedTranscript] = useState('');
   const [retryUri, setRetryUri] = useState<string | null>(null);
@@ -75,20 +80,20 @@ export default function VoiceScreen() {
   const [copyIndex, setCopyIndex] = useState(0);
   const listenStartRef = useRef(0);
 
+  // TC-027: the parse belongs to the durable queue, not to this screen. We only
+  // hold the id of the job we started, and watch it.
+  const { submit } = useVoiceJobs();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = useVoiceJob(jobId);
+  const shownJobRef = useRef<string | null>(null);
+
   useEffect(() => {
     primeSoundSession();
+    // Asked once, on the screen that will actually produce notifications.
+    void ensureNotificationPermission();
   }, []);
 
-  // ---- Backgrounding resilience for the Gemini call (pipeline A) -----------
-  const phaseRef = useRef(phase);
   const mountedRef = useRef(true);
-  const inFlightRef = useRef(false);
-  const interruptedRef = useRef(false);
-  const lastUriRef = useRef<string | null>(null);
-  const processRef = useRef<(uri: string) => Promise<void>>(async () => {});
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
   useEffect(
     () => () => {
       mountedRef.current = false;
@@ -96,85 +101,82 @@ export default function VoiceScreen() {
     [],
   );
 
-  const process = useCallback(
-    async (uri: string) => {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
-      interruptedRef.current = false;
-      lastUriRef.current = uri;
+  // ---- Watch the durable job (TC-027) --------------------------------------
+  // The runner does the work; the screen only reflects the job's final state.
+  // If the user leaves mid-parse the job still finishes and notifies.
+  const showOutcome = useCallback(
+    async (finished: VoiceJob) => {
+      if (finished.status === 'failed') {
+        setRetryUri(finished.audioUri); // never lose the recording
+        setErrorMsg(finished.error ?? 'That did not go through.');
+        setPhase('error');
+        hapticError();
+        return;
+      }
+      let items: EvaluatedPending[] = [];
+      try {
+        items = await evaluatePendingByIds(finished.pendingIds);
+      } catch {
+        items = [];
+      }
+      if (!mountedRef.current) return;
+      setConfirmItems(items);
+      setRetryUri(null);
+      setPhase('success');
+      playChime();
+      hapticSuccess();
+      refresh();
+    },
+    [refresh],
+  );
+
+  useEffect(() => {
+    if (!job || !mountedRef.current) return;
+    // Still in flight — `startJob` already put the screen in 'processing'.
+    if (job.status === 'queued' || job.status === 'running') return;
+    if (shownJobRef.current === job.id) return; // already rendered this outcome
+    shownJobRef.current = job.id;
+    void showOutcome(job);
+  }, [job, showOutcome]);
+
+  // ---- Capture (pipeline B) ------------------------------------------------
+  const startJob = useCallback(
+    async (audioUri: string, transcript: string) => {
       setCopyIndex(0);
       setPhase('processing');
       try {
-        const parsed = await interpretVoice(uri, AUDIO_MIME);
-        refresh();
-        const items = await evaluatePendingByIds(parsed.pendingIds);
-        inFlightRef.current = false;
+        const id = await submit({ audioUri, audioMime: AUDIO_MIME, transcript });
         if (!mountedRef.current) return;
-        setResult(parsed);
-        setConfirmItems(items);
-        setRetryUri(null);
-        setPhase('success');
-        playChime();
-        hapticSuccess();
+        shownJobRef.current = null;
+        setJobId(id);
       } catch (e) {
-        setRetryUri(uri); // never lose the recording
-        // App suspended mid-request → iOS likely killed the socket. Resume
-        // instead of burning the recording on a spurious network error.
-        if (interruptedRef.current) {
-          inFlightRef.current = false;
-          if (AppState.currentState === 'active') {
-            void processRef.current(uri); // resume via ref — avoids self-reference
-          } else {
-            setErrorMsg('Paused — resuming when you reopen Kaasu…');
-          }
-          return;
-        }
-        inFlightRef.current = false;
         if (!mountedRef.current) return;
+        setRetryUri(audioUri);
         setErrorMsg(e instanceof Error ? e.message : String(e));
         setPhase('error');
         hapticError();
       }
     },
-    [refresh],
+    [submit],
   );
-  useEffect(() => {
-    processRef.current = process;
-  });
 
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'background' || next === 'inactive') {
-        if (phaseRef.current === 'processing') interruptedRef.current = true;
-      } else if (next === 'active') {
-        if (
-          interruptedRef.current &&
-          !inFlightRef.current &&
-          lastUriRef.current &&
-          phaseRef.current === 'processing'
-        ) {
-          void processRef.current(lastUriRef.current);
-        }
+  const handleDone = useCallback(
+    (res: CaptureResult) => {
+      if (!mountedRef.current) return;
+      if (res.cancelled) {
+        setPhase('ready');
+        return;
       }
-    });
-    return () => sub.remove();
-  }, []);
-
-  // ---- Capture (pipeline B) ------------------------------------------------
-  const handleDone = useCallback((res: CaptureResult) => {
-    if (!mountedRef.current) return;
-    if (res.cancelled) {
-      setPhase('ready');
-      return;
-    }
-    if (!res.uri) {
-      setErrorMsg('That recording came through empty — give it another go.');
-      setPhase('error');
-      return;
-    }
-    setCapturedTranscript(res.transcript);
-    void processRef.current(res.uri);
-  }, []);
+      if (!res.uri) {
+        setErrorMsg('That recording came through empty — give it another go.');
+        setPhase('error');
+        return;
+      }
+      setCapturedTranscript(res.transcript);
+      void startJob(res.uri, res.transcript);
+    },
+    [startJob],
+  );
   const capture = useVoiceCapture({ onDone: handleDone });
   const { cancel: cancelCapture } = capture; // stable (useCallback) — safe dep
 
@@ -220,7 +222,8 @@ export default function VoiceScreen() {
     }
     hapticStart();
     playStart();
-    setResult(null);
+    setJobId(null);
+    shownJobRef.current = null;
     setConfirmItems([]);
     setCapturedTranscript('');
     listenStartRef.current = Date.now();
@@ -242,11 +245,13 @@ export default function VoiceScreen() {
   };
 
   const retry = () => {
-    if (retryUri) void process(retryUri);
+    // Re-queue the SAME recording as a fresh job — the audio is still on disk.
+    if (retryUri) void startJob(retryUri, capturedTranscript);
   };
 
   const sayAnother = () => {
-    setResult(null);
+    setJobId(null);
+    shownJobRef.current = null;
     setConfirmItems([]);
     setCapturedTranscript('');
     setPhase('ready');
@@ -263,7 +268,8 @@ export default function VoiceScreen() {
   };
 
   // ---- Success — per-transaction confirm cards (design: logged state) ------
-  if (phase === 'success' && result) {
+  if (phase === 'success' && job) {
+    const shownTranscript = job.resultTranscript || job.transcript;
     const total = confirmItems.length;
     const nothing = total === 0;
     const heading = nothing ? 'Nothing logged' : total > 1 ? `${total} logged` : 'Logged';
@@ -280,9 +286,9 @@ export default function VoiceScreen() {
           </View>
           <View style={styles.successHeadingWrap}>
             <Text style={[type.h1, { color: colors.text }]}>{heading}</Text>
-            {result.transcript ? (
+            {shownTranscript ? (
               <Text numberOfLines={2} style={[type.body, { color: colors.textSubtle, fontStyle: 'italic' }]}>
-                “{result.transcript}”
+                “{shownTranscript}”
               </Text>
             ) : null}
           </View>
@@ -310,11 +316,11 @@ export default function VoiceScreen() {
             ))
           )}
 
-          {result.unqualifiedIntents.length > 0 ? (
+          {job.unqualifiedCount > 0 ? (
             <View style={[styles.hintPill, { borderColor: colors.warning }]}>
               <Feather name="alert-circle" size={13} color={isDark ? colors.warning : colors.lending} />
               <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
-                {result.unqualifiedIntents.length} heard without an amount — not logged
+                {job.unqualifiedCount} heard without an amount — not logged
               </Text>
             </View>
           ) : null}

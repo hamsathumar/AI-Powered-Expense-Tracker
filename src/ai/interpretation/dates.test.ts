@@ -2,7 +2,7 @@
  *  reference date; unsupported/absent → reference now with a resolved flag. */
 import { describe, expect, it } from '@jest/globals';
 
-import { resolveDateExpression } from './dates';
+import { resolveDateExpression, resolveRecurrenceEnd } from './dates';
 
 const ref = new Date('2026-08-17T12:00:00.000Z'); // a Monday
 
@@ -39,5 +39,122 @@ describe('resolveDateExpression', () => {
     const r = resolveDateExpression('some fuzzy time', ref);
     expect(dayOf(r.iso)).toBe('2026-08-17');
     expect(r.resolved).toBe(false);
+  });
+});
+
+// ── Recurrence end conditions — TC-025 ───────────────────────────────────
+const anchor = new Date('2026-08-21T12:00:00.000Z'); // the TC-025 "Next due"
+
+describe('resolveRecurrenceEnd — TC-025 ("for the next 3 months" became "Ends: Never")', () => {
+  it('reads a duration whose unit matches the cadence as a COUNT of payments', () => {
+    // 3 monthly payments: 21 Aug, 21 Sep, 21 Oct. endDate is inclusive in
+    // src/domain/recurring.ts, so it lands on the third one.
+    const r = resolveRecurrenceEnd({
+      endExpression: 'for the next 3 months',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBe('2026-10-21');
+    expect(r.resolved).toBe(true);
+    expect(r.explicitNever).toBe(false);
+  });
+
+  it('reads a duration whose unit differs from the cadence as a span of time', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'for the next 3 months',
+      occurrenceCount: null,
+      frequency: 'weekly',
+      anchor,
+    });
+    expect(r.endDate).toBe('2026-11-21');
+    expect(r.resolved).toBe(true);
+  });
+
+  it('honours an explicit occurrence count above any wording', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: null,
+      occurrenceCount: 6,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBe('2027-01-21'); // anchor + 5 months
+  });
+
+  it('reads "for 6 payments" / "3 times" as counts', () => {
+    expect(
+      resolveRecurrenceEnd({ endExpression: 'for 6 payments', occurrenceCount: null, frequency: 'monthly', anchor })
+        .endDate,
+    ).toBe('2027-01-21');
+    expect(
+      resolveRecurrenceEnd({ endExpression: 'three times', occurrenceCount: null, frequency: 'weekly', anchor })
+        .endDate,
+    ).toBe('2026-09-04'); // anchor + 2 weeks
+  });
+
+  it('reads "until <month>" as the end of that month', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until December',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBe('2026-12-31');
+    expect(r.resolved).toBe(true);
+  });
+
+  it('rolls "until <month>" into next year when the month has already passed', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until March',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBe('2027-03-31');
+  });
+
+  it('records an explicit "never" as never — not as unparsed', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until I cancel',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBeNull();
+    expect(r.explicitNever).toBe(true);
+    expect(r.resolved).toBe(true);
+  });
+
+  it('nothing stated → no end date, and that is a resolved answer', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: null,
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBeNull();
+    expect(r.resolved).toBe(true);
+    expect(r.explicitNever).toBe(false);
+  });
+
+  it('stated but not understood → flagged unresolved, never silently "Never"', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until things settle down',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBeNull();
+    expect(r.resolved).toBe(false);
+  });
+
+  it('never invents an end date from a garbage count', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: null,
+      occurrenceCount: 0,
+      frequency: 'monthly',
+      anchor,
+    });
+    expect(r.endDate).toBeNull();
   });
 });

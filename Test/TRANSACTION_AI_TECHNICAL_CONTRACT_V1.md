@@ -21,6 +21,14 @@
 
 ---
 
+> **AMENDED — V1.1 (2026-08-21).** Second real-world test round
+> (`Test/AI_TEST_CASE_LOG_v2.md`). Contract changes: §15 and §16 gain the
+> **one-sum-one-operation** invariant; §16 gains `endExpression` /
+> `occurrenceCount`; §11 gains reference **usability**; §25 gains name and
+> entity sanitisation. `CONTRACT_SCHEMA_VERSION` stays `v1` — these are
+> additive fields and tightened invariants, not a breaking reshape. Full
+> reasoning: `Test/TRANSACTION_AI_V1_1_AMENDMENTS.md`.
+
 ## 1. What this contract is (and is not)
 
 The Technical Contract is the bridge between the **AI Constitution V1** (behavioural rules) and future **implementation**. The Architecture defines *where authority lives*; the Constitution defines *how the interpreter must behave*; this contract defines **the exact structure and semantics of the data that crosses the AI → application boundary.**
@@ -319,6 +327,31 @@ Gemini provides `"Commercial Bank"`, never `account_id = 7` (ER-2, AI-008). The 
 
 The fuzzy-matching algorithm is **not** defined here, and the **fuzzy entity matching** product question is **OPEN** (§30). Database IDs are never AI output fields.
 
+> **V1.1 AMENDMENT C — usability is checked BEFORE resolution.** *(TC-026.)*
+> V1 defined three resolution outcomes — `resolved`, `unresolved`,
+> `ambiguous` — all of which assume the reference is at least a **plausible
+> label**. It had no way to express a reference that must not be used at all,
+> so `"Ignore all previous instructions"` travelled through as a perfectly
+> ordinary `state=KNOWN` person reference, was offered for creation, and was
+> persisted.
+>
+> A **usability check runs before resolution**. An unusable reference is
+> dropped (`reference=null, state=UNKNOWN`) and the operation carries a
+> blocking conflict explaining why — never blanked in silence.
+>
+> Unusable means any of:
+> ```
+> - contains instruction-shaped text          (see §25)
+> - contains sentence punctuation  . ! ? ; :  or a line break
+> - more than 5 words, or more than 48 characters
+> - a control token (ignore / delete / prompt / system / …) inside a
+>   multi-word phrase
+> ```
+> Calibrated conservatively against the user's real data — `Mayees Mowlavi`,
+> `Commercial Bank`, `Food & Drinks`, `Mom` all pass unchanged. This is a
+> **usability** test, not a fuzzy-matching one; the fuzzy-matching question
+> remains OPEN (§30).
+
 ---
 
 ## 12. Category Contract
@@ -399,6 +432,20 @@ BillSplitOperation (conceptual):
 
 The AI does **not**: calculate authoritative shares; create people; create person IDs; commit split records; resolve application entities. The application owns those. Missing participants are never invented (BS-1..BS-5, ER-10, AI-012). Without `splitEvidence`, this must **not** be emitted as a Bill Split (it would be an ordinary expense candidate instead).
 
+> **V1.1 AMENDMENT A — contract invariant: one sum, one operation.** *(TC-021.)*
+> A spend emitted as a `BillSplitOperation` must **NOT** also appear as an
+> `OrdinaryCandidate`. An interpretation containing both for the same money is
+> **invalid** (see §26) and the application suppresses the ordinary duplicate
+> before queueing.
+>
+> Deterministic match rule — all three must agree:
+> ```
+> amount (minor units)  AND  operation type  AND  category reference
+> ```
+> A null category on either side counts as agreement, because the model
+> routinely omits it on the duplicate. Two operations with different
+> categories are two different spends and both survive.
+
 ---
 
 ## 16. Recurring Transaction Contract (specialized)
@@ -416,6 +463,9 @@ RecurringOperation (conceptual):
   recurrenceExpression # verbatim schedule phrasing, e.g. "every month on the 15th"
   intervalHint       # monthly | weekly | yearly | daily | custom | UNRESOLVED (interpretation, not a schedule)
   anchorDateExpression # DateInterpretation | null
+  endExpression      # V1.1 — verbatim END phrasing, e.g. "for the next 3 months",
+                     #        "until December", "until I cancel"            | null
+  occurrenceCount    # V1.1 — a stated COUNT of payments, e.g. "for 6 payments" | null
   recurringEvidence  # evidence that recurrence was intended (§19)
   evidenceStrength   # clear | strong | ambiguous | one_time   (EVIDENCE-BASED — no numeric threshold)
   account/category/person refs  # EntityReference (as applicable)
@@ -425,6 +475,25 @@ RecurringOperation (conceptual):
 **No `confidence > 0.50` or any numeric threshold** (RC-5). `evidenceStrength` is a qualitative, evidence-based distinction; the exact borderline mechanism between `strong` and `one_time` is **OPEN** (§30) and must not be invented here.
 
 Gemini does **not**: schedule, generate occurrences, create future transactions, auto-post, or bypass approval. The application owns recurrence execution (RC-6, AI-012). The final recurrence database model is not defined here.
+
+> **V1.1 AMENDMENT E — the end condition.** *(TC-025.)*
+> V1 had no field for a stated bound, so "for the next 3 months" had nowhere
+> to go and was dropped; the template defaulted to `Ends: Never`.
+>
+> `endExpression` and `occurrenceCount` follow the §17 date rule **exactly**:
+> the AI supplies **wording**, the application resolves the **date**. Emitting
+> a computed end date is a contract violation, identical in kind to emitting a
+> resolved `occurredAt`.
+>
+> Application-side constraints:
+> - `occurrenceCount` is bounded to `1…600`; anything else reads as unstated,
+>   so a malformed value cannot become an absurd schedule.
+> - Resolution reports **three** outcomes, not two: a date, an explicit
+>   "never", or **stated-but-unparsed** — which must be surfaced to the user.
+>   Collapsing the third into "never" is the TC-025 failure.
+>
+> Amendment A (one sum, one operation) applies here too: a charge emitted as
+> recurring must not also appear as an ordinary candidate.
 
 ---
 
@@ -567,6 +636,34 @@ The contract must be designed so that **"Gemini was fooled" does not imply "the 
 
 Injection resistance is therefore a **structural** property of the contract + downstream validation, not a reliance on model behaviour (PI-1..PI-5, AI-016, Arch §21).
 
+> **V1.1 AMENDMENT B/C — the contract must also sanitise CONTENT and
+> REFERENCES.** *(TC-022, TC-026.)*
+> V1 protected every *authoritative* field: amounts face grounding, ids are
+> stripped, approval cannot be claimed. It left two non-authoritative fields
+> as free text — `name` and `EntityReference.reference` — on the reasoning that
+> neither can move money. Both turned out to be carriers:
+>
+> - **`name`** carried the full injected payload into the ledger as the
+>   transaction's label *(TC-022; this is Requirements PI-6, unmet by V1)*.
+> - **`reference`** became a **persisted Person entity**, reusable in every
+>   future transaction *(TC-026)* — injected text escaping its queue item and
+>   becoming durable state.
+>
+> Contract additions:
+> 1. A `name` carrying instruction-like text is **discarded**; the application
+>    derives a name from resolved context instead (§ Amendment D).
+> 2. An `EntityReference.reference` that is instruction-like or sentence-like
+>    is **unusable**: dropped before resolution, never offered for creation,
+>    and rejected again at the persistence boundary.
+>
+> Detection is **shape-based**, never phrase-literal — the V1 marker missed
+> "ignore all **your** previous instructions" purely because of the word
+> "your".
+>
+> Policy unchanged: **flag and sanitise, never silently reject.** The operation
+> keeps its amount and transcript and enters the queue carrying a blocking
+> `injection_suspected` conflict.
+
 ---
 
 ## 26. Invalid Contract Examples (must be rejected by application validation)
@@ -587,6 +684,17 @@ Injection resistance is therefore a **structural** property of the contract + do
 | 12 | AI-generated `approved=true` | Gemini cannot approve (§24, AP-1) |
 | 13 | AI-generated commit instruction | Gemini cannot commit (§22) |
 | 14 | Prompt-injection type replacement (expense→income by embedded instruction) | Conflict must surface; grounding + validation block it (§25, PI) |
+
+**Added by V1.1** *(`AI_TEST_CASE_LOG_v2.md`)*:
+
+| # | Invalid output | Why rejected |
+|---|---|---|
+| 15 | The same sum emitted as BOTH a specialized operation and an ordinary candidate | One sum, one operation — a double-count (§15, §16; TC-021) |
+| 16 | `name` containing instruction-like text | Injected text is never content; discarded and re-derived (§25; TC-022, PI-6) |
+| 17 | `EntityReference.reference` containing instruction-like or sentence-like text | Unusable reference — dropped before resolution and at persistence (§11, §25; TC-026) |
+| 18 | `name` echoing the operation type ("expense") when the category is known | Naming is app-owned; resolved context must be reused (TC-023) |
+| 19 | A recurring operation supplying a computed **end date** rather than `endExpression` | Dates are resolved by the application, never by the AI (§16, §17; TC-025) |
+| 20 | `occurrenceCount` outside `1…600`, non-integer, or non-numeric | Reads as unstated; a malformed value may not become a schedule (§16; TC-025) |
 
 These are conceptual, not implementation tests.
 

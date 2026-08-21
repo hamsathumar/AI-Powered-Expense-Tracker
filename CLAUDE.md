@@ -19,6 +19,11 @@ generic skill recommendations:
 - `design-system.md` — colour tokens, typography (Sora + Inter), components,
   motion, anti-patterns. Overrides any generic design skill.
 
+For the voice/AI layer specifically, `Test/` holds the AI blueprint. Read
+`TRANSACTION_AI_V1_1_AMENDMENTS.md` **first** — it records what changed after
+real-world testing and points into the V1 constitution / architecture /
+technical-contract documents.
+
 ## Stack
 
 Expo SDK 57 (React Native 0.86, React 19, TypeScript), expo-router (routes in
@@ -100,6 +105,18 @@ or category breakdowns.
   API key in expo-secure-store via Settings, model is a user setting
   (default `gemini-2.5-flash`), expo-audio capture screen, floating mic on Home.
 
+- **Transaction AI V1.1 ✅ (2026-08-21):** second-round test evidence
+  (`Test/AI_TEST_CASE_LOG_v2.md`, TC-021…TC-027) closed. Seven amendments —
+  duplicate suppression for split/recurring, shape-based injection detection,
+  entity-reference containment (incl. a guard on `createPerson` itself),
+  app-owned Title Case naming, recurrence end conditions, and a durable
+  voice-parse job queue (`voice_jobs`, migration 5) that survives
+  backgrounding and app kill. Blueprint updated in
+  `Test/TRANSACTION_AI_V1_1_AMENDMENTS.md` + amendment blocks in the three V1
+  docs. **Needs `npx expo prebuild` before the next run** — `expo-notifications`
+  was added to `app.json`.
+
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test`). Gemini model name is user-editable in Settings — change it if
-Google deprecates the default. To re-sign weekly: `npx expo run:ios --device`.
+(`npm test` — 186 tests). Gemini model name is user-editable in Settings —
+change it if Google deprecates the default. To re-sign weekly:
+`npx expo run:ios --device`.

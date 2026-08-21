@@ -30,7 +30,12 @@ export default function PeopleScreen() {
     Alert.prompt('New person', 'Name', async (text) => {
       const trimmed = text?.trim();
       if (!trimmed) return;
-      await createPerson(trimmed);
+      try {
+        await createPerson(trimmed);
+      } catch (e) {
+        Alert.alert('Could not add person', e instanceof Error ? e.message : String(e));
+        return;
+      }
       reload();
     });
   };

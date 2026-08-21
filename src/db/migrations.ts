@@ -175,6 +175,39 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // ── v5 — durable voice-parse jobs (TC-027) ─────────────────────────────
+    // Interpretation used to live entirely inside the voice screen's React
+    // state, so backgrounding the app (or leaving the screen) stalled the parse
+    // and killing the app lost the recording outright. A job row makes the work
+    // survive both: the runner picks up anything unfinished the next time the
+    // app is in the foreground.
+    //
+    // This is NOT a financial table. A job only ever produces rows in
+    // `pending_operations`, which still face the approval gate — the safety
+    // boundary is unchanged.
+    version: 5,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE voice_jobs (
+          id           TEXT PRIMARY KEY,
+          audio_uri    TEXT NOT NULL,
+          audio_mime   TEXT NOT NULL,
+          transcript   TEXT,            -- on-device transcript (display only)
+          status       TEXT NOT NULL,   -- queued|running|done|failed
+          attempts     INTEGER NOT NULL DEFAULT 0,
+          error        TEXT,
+          pending_ids  TEXT,            -- JSON array of pending_operations ids
+          result_transcript TEXT,        -- what Gemini transcribed (may differ from on-device)
+          unqualified_count INTEGER NOT NULL DEFAULT 0, -- intents heard without an amount
+          notified     INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT NOT NULL,
+          updated_at   TEXT NOT NULL
+        );
+        CREATE INDEX idx_voice_jobs_status ON voice_jobs(status, created_at);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

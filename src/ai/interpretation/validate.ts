@@ -15,6 +15,8 @@
  *
  * Pure and synchronous — no I/O, no crypto — so it is fully unit-testable.
  */
+import { detectInjection, isSuspiciousEntityReference, sanitiseName } from './injection';
+import { resolveName, type NameContext } from './naming';
 import {
   CONTRACT_SCHEMA_VERSION,
   type Amount,
@@ -138,13 +140,31 @@ function toAmount(raw: unknown): Amount {
   };
 }
 
-function toRef(raw: unknown): EntityRef {
+/**
+ * Read one entity reference. Instruction-like references are DROPPED here
+ * (TC-026): they never reach entity resolution, never reach the review screen,
+ * and therefore can never be offered for creation as a real Person / Account /
+ * Category. Every dropped reference is reported through `dropped` so the caller
+ * can attach a blocking conflict.
+ */
+function toRef(raw: unknown, dropped: string[] = []): EntityRef {
   // NOTE: any `id`/`accountId`/… on `raw` is intentionally NOT read.
   const o = asObject(raw);
-  const reference = asString(o.reference);
+  let reference = asString(o.reference);
+  if (reference !== null && isSuspiciousEntityReference(reference)) {
+    dropped.push(reference);
+    reference = null;
+  }
   const candidates = asArray(o.candidates)
     .map((c) => asString(c))
-    .filter((c): c is string => c !== null);
+    .filter((c): c is string => c !== null)
+    .filter((c) => {
+      if (isSuspiciousEntityReference(c)) {
+        dropped.push(c);
+        return false;
+      }
+      return true;
+    });
   return {
     reference,
     provenance: normProvenance(o.provenance),
@@ -153,9 +173,17 @@ function toRef(raw: unknown): EntityRef {
   };
 }
 
-function toRefOrNull(raw: unknown): EntityRef | null {
-  const ref = toRef(raw);
+function toRefOrNull(raw: unknown, dropped: string[] = []): EntityRef | null {
+  const ref = toRef(raw, dropped);
   return ref.reference || ref.candidates.length > 0 ? ref : null;
+}
+
+/** A stated number of occurrences. Bounded so a malformed value cannot become
+ *  an absurd schedule; anything outside the range is treated as unstated. */
+function toOccurrenceCount(raw: unknown): number | null {
+  const n = asNumber(raw);
+  if (n === null || !Number.isInteger(n) || n < 1 || n > 600) return null;
+  return n;
 }
 
 function toDate(raw: unknown): DateExpr {
@@ -193,28 +221,25 @@ function toConflicts(raw: unknown): Conflict[] {
     .filter((c): c is Conflict => c !== null);
 }
 
-function cleanName(raw: unknown, fallback: string): string {
-  const s = asString(raw);
-  if (!s) return fallback;
-  // Collapse whitespace and cap length. (Naming quality R12 - no data-integrity impact.)
-  const cleaned = s.replace(/\s+/g, ' ').trim().slice(0, 120);
-  return cleaned.length > 0 ? cleaned : fallback;
+/**
+ * Name an operation (TC-023 / TC-024). Delegates to the app-owned naming
+ * module: injected text is stripped, an uninformative name (the model echoing
+ * "expense" back) is replaced by one derived from resolved context, and the
+ * result is rendered in Title Case. Naming never affects financial data.
+ */
+function nameFor(raw: unknown, ctx: NameContext): string {
+  return resolveName(asString(raw), ctx, sanitiseName);
 }
 
-// ── Injection detection (deterministic backstop, not the only defence) ────
-const INJECTION_MARKERS: RegExp[] = [
-  /ignore\s+(all\s+)?(the\s+)?previous\s+instructions/i,
-  /ignore\s+everything\s+above/i,
-  /ignore\s+your\s+(transaction\s+)?rules/i,
-  /disregard\s+(the\s+)?(above|previous|prior)/i,
-  /system\s+override/i,
-  /change\s+the\s+amount\s+to/i,
-  /you\s+are\s+now/i,
-  /pretend\s+(that|to)/i,
-];
-function detectInjection(transcript: string): boolean {
-  return INJECTION_MARKERS.some((re) => re.test(transcript));
-}
+/** Conflict attached when instruction-like text was stripped from an operation. */
+const INJECTION_NOTE =
+  'Instruction-like text detected in the spoken input; verify against the transcript before approving.';
+const droppedRefNote = (refs: string[]): Conflict => ({
+  kind: 'injection_suspected',
+  note: `Ignored instruction-like text where a name was expected (${refs
+    .map((r) => `“${r.slice(0, 40)}”`)
+    .join(', ')}). Pick the right one before approving.`,
+});
 
 // ── Main entry ───────────────────────────────────────────────────────────
 export interface ValidateOptions {
@@ -286,18 +311,34 @@ export function validateInterpretation(
       });
     }
 
+    const dropped: string[] = [];
+    const account = toRef(src.account, dropped);
+    const toAccount = operation === 'transfer' ? toRef(src.toAccount, dropped) : null;
+    const category = isExpInc ? toRef(src.category, dropped) : null;
+    const person =
+      operation === 'lending' ? toRef(src.person, dropped) : toRefOrNull(src.person, dropped);
+    const direction = operation === 'lending' ? normDirection(src.direction) : null;
+    if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
+
     candidates.push({
       localId: nextId('cand'),
       operation,
       amount,
-      account: toRef(src.account),
-      toAccount: operation === 'transfer' ? toRef(src.toAccount) : null,
-      category: isExpInc ? toRef(src.category) : null,
-      person: operation === 'lending' ? toRef(src.person) : toRefOrNull(src.person),
-      direction: operation === 'lending' ? normDirection(src.direction) : null,
+      account,
+      toAccount,
+      category,
+      person,
+      direction,
       requestedLabel,
       date: toDate(src.dateExpression),
-      name: cleanName(src.name, operation),
+      name: nameFor(src.name, {
+        operation,
+        categoryReference: category?.reference,
+        personReference: person?.reference,
+        toAccountReference: toAccount?.reference,
+        accountReference: account.reference,
+        direction,
+      }),
       conflicts,
       evidence: toEvidence(src.evidence),
     });
@@ -310,19 +351,36 @@ export function validateInterpretation(
     extraConflicts: Conflict[],
   ) => {
     const isExpInc = operation === 'expense' || operation === 'income';
+    const dropped: string[] = [];
+    const account = toRef(src.account, dropped);
+    const toAccount = operation === 'transfer' ? toRef(src.toAccount, dropped) : null;
+    const category = isExpInc ? toRef(src.category, dropped) : null;
+    const person =
+      operation === 'lending' ? toRef(src.person, dropped) : toRefOrNull(src.person, dropped);
+    const direction = operation === 'lending' ? normDirection(src.direction) : null;
+    const conflicts = [...toConflicts(src.conflicts), ...extraConflicts];
+    if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
+
     candidates.push({
       localId: nextId('cand'),
       operation,
       amount,
-      account: toRef(src.account),
-      toAccount: operation === 'transfer' ? toRef(src.toAccount) : null,
-      category: isExpInc ? toRef(src.category) : null,
-      person: operation === 'lending' ? toRef(src.person) : toRefOrNull(src.person),
-      direction: operation === 'lending' ? normDirection(src.direction) : null,
+      account,
+      toAccount,
+      category,
+      person,
+      direction,
       requestedLabel: null,
       date: toDate(src.dateExpression ?? src.anchorDateExpression),
-      name: cleanName(src.name, operation),
-      conflicts: [...toConflicts(src.conflicts), ...extraConflicts],
+      name: nameFor(src.name, {
+        operation,
+        categoryReference: category?.reference,
+        personReference: person?.reference,
+        toAccountReference: toAccount?.reference,
+        accountReference: account.reference,
+        direction,
+      }),
+      conflicts,
       evidence: toEvidence(src.evidence),
     });
   };
@@ -337,9 +395,10 @@ export function validateInterpretation(
         pushUnqualified(src, 'expense', total, 'NO_TRANSACTION_VALUE_DETECTED');
         return;
       }
+      const dropped: string[] = [];
       const splitEvidence = toEvidence(src.splitEvidence);
       const participants = asArray(src.participantRefs ?? src.participants)
-        .map((p) => toRefOrNull(p))
+        .map((p) => toRefOrNull(p, dropped))
         .filter((p): p is EntityRef => p !== null);
 
       // BS-1 backstop: without EXPLICIT split evidence AND ≥1 participant,
@@ -349,20 +408,30 @@ export function validateInterpretation(
         downgradeToOrdinary(src, 'expense', total, []);
         return;
       }
+      const payer = toRefOrNull(src.payerRef ?? src.payer, dropped);
+      const account = toRefOrNull(src.account, dropped);
+      const category = toRefOrNull(src.category, dropped);
+      const conflicts = toConflicts(src.conflicts);
+      if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
+
       specialized.push({
         localId: nextId('bs'),
         kind: 'bill_split',
         operation: 'expense',
         total,
         participants,
-        payer: toRefOrNull(src.payerRef ?? src.payer),
+        payer,
         allocationHint: asString(src.allocationHint),
-        account: toRefOrNull(src.account),
-        category: toRefOrNull(src.category),
+        account,
+        category,
         date: toDate(src.dateExpression),
-        name: cleanName(src.name, 'Split bill'),
+        name: nameFor(src.name, {
+          operation: 'expense',
+          categoryReference: category?.reference,
+          billSplit: true,
+        }),
         splitEvidence,
-        conflicts: toConflicts(src.conflicts),
+        conflicts,
       });
       return;
     }
@@ -394,6 +463,15 @@ export function validateInterpretation(
         ]);
         return;
       }
+      const dropped: string[] = [];
+      const account = toRefOrNull(src.account, dropped);
+      const toAccount = op === 'transfer' ? toRefOrNull(src.toAccount, dropped) : null;
+      const category = op === 'expense' || op === 'income' ? toRefOrNull(src.category, dropped) : null;
+      const person = op === 'lending' ? toRefOrNull(src.person, dropped) : null;
+      const direction = op === 'lending' ? normDirection(src.direction) : null;
+      const conflicts = toConflicts(src.conflicts);
+      if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
+
       specialized.push({
         localId: nextId('rec'),
         kind: 'recurring',
@@ -402,15 +480,28 @@ export function validateInterpretation(
         recurrenceExpression: asString(src.recurrenceExpression),
         intervalHint: normInterval(src.intervalHint),
         anchorDate: toDate(src.anchorDateExpression),
+        // TC-025: a stated duration ("for the next 3 months") is part of what
+        // the user said. It is preserved as an EXPRESSION / count here and
+        // resolved to a real end date by app-owned logic, never by the model.
+        endExpression: asString(src.endExpression),
+        occurrenceCount: toOccurrenceCount(src.occurrenceCount),
         evidenceStrength: strength,
-        account: toRefOrNull(src.account),
-        toAccount: op === 'transfer' ? toRefOrNull(src.toAccount) : null,
-        category: op === 'expense' || op === 'income' ? toRefOrNull(src.category) : null,
-        person: op === 'lending' ? toRefOrNull(src.person) : null,
-        direction: op === 'lending' ? normDirection(src.direction) : null,
-        name: cleanName(src.name, 'Recurring'),
+        account,
+        toAccount,
+        category,
+        person,
+        direction,
+        name: nameFor(src.name, {
+          operation: op,
+          categoryReference: category?.reference,
+          personReference: person?.reference,
+          toAccountReference: toAccount?.reference,
+          accountReference: account?.reference,
+          direction,
+          recurring: true,
+        }),
         recurringEvidence: evidence,
-        conflicts: toConflicts(src.conflicts),
+        conflicts,
       });
       return;
     }
@@ -423,22 +514,60 @@ export function validateInterpretation(
   asArray(raw.unqualifiedIntents).forEach(processOrdinary);
   asArray(raw.specializedOperations).forEach(processSpecialized);
 
+  // ── TC-021 backstop: one spend, one operation ──────────────────────────
+  // A single utterance that describes a Bill Split (or a recurring charge)
+  // must not ALSO yield a plain candidate for the same money. In TC-021 the
+  // model emitted both, both became real pending rows, and approving both
+  // would have double-counted Rs900. The specialized operation is canonical;
+  // the duplicate is suppressed here, before anything is queued.
+  //
+  // Deliberately narrow so two genuinely different transactions of the same
+  // value survive: the amount, the operation type AND the category reference
+  // must all agree (a null category on either side counts as agreement,
+  // because the model routinely omits it on the duplicate).
+  const deduped = candidates.filter((cand) => {
+    const twin = specialized.find((sp) => {
+      const spAmount = sp.kind === 'bill_split' ? sp.total.valueMinor : sp.base.valueMinor;
+      if (spAmount === null || spAmount !== cand.amount.valueMinor) return false;
+      if (sp.operation !== cand.operation) return false;
+      return sameReference(sp.category?.reference ?? null, cand.category?.reference ?? null);
+    });
+    if (!twin) return true;
+    issues.push(
+      `suppressed ordinary ${cand.operation} candidate duplicating ${twin.kind} operation ${twin.localId}`,
+    );
+    return false;
+  });
+
   // Injection backstop: flag every qualified operation for mandatory review.
   if (detectInjection(transcript)) {
-    const note = 'Instruction-like text detected in the spoken input; verify against the transcript before approving.';
-    for (const c of candidates) c.conflicts.push({ kind: 'injection_suspected', note });
-    for (const s of specialized) s.conflicts.push({ kind: 'injection_suspected', note });
+    for (const c of deduped) {
+      if (!c.conflicts.some((x) => x.kind === 'injection_suspected')) {
+        c.conflicts.push({ kind: 'injection_suspected', note: INJECTION_NOTE });
+      }
+    }
+    for (const s of specialized) {
+      if (!s.conflicts.some((x) => x.kind === 'injection_suspected')) {
+        s.conflicts.push({ kind: 'injection_suspected', note: INJECTION_NOTE });
+      }
+    }
     issues.push('injection markers detected in transcript');
   }
 
-  const hasQualified = candidates.length > 0 || specialized.length > 0;
+  const hasQualified = deduped.length > 0 || specialized.length > 0;
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     outcome: hasQualified ? 'CANDIDATES_PRESENT' : 'NO_TRANSACTION_VALUE_DETECTED',
     transcript,
-    candidates,
+    candidates: deduped,
     specializedOperations: specialized,
     unqualifiedIntents: unqualified,
     issues,
   };
+}
+
+/** Two textual references agree when they are equal, or either is absent. */
+function sameReference(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return true;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }

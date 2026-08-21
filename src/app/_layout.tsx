@@ -9,6 +9,7 @@ import { AppState } from 'react-native';
 
 import { evaluateRecurringTemplates } from '@/db/queries/recurring';
 import { PendingCountProvider, usePendingCount } from '@/state/PendingCount';
+import { VoiceJobsProvider } from '@/state/VoiceJobs';
 import { CurrencyProvider } from '@/theme/CurrencyContext';
 import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
 
@@ -79,9 +80,13 @@ export default function RootLayout() {
     <ThemeProvider>
       <CurrencyProvider>
         <PendingCountProvider>
-          <RecurringEvaluator />
-          <StatusBar style="auto" />
-          <RootStack />
+          {/* TC-027: voice parses are owned here, above the router, so they
+              survive leaving the voice screen and being killed by iOS. */}
+          <VoiceJobsProvider>
+            <RecurringEvaluator />
+            <StatusBar style="auto" />
+            <RootStack />
+          </VoiceJobsProvider>
         </PendingCountProvider>
       </CurrencyProvider>
     </ThemeProvider>

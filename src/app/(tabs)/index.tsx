@@ -20,7 +20,8 @@ import { QuickActions } from '@/components/QuickActions';
 import { SectionHeader } from '@/components/SectionHeader';
 import { TransactionRow } from '@/components/TransactionRow';
 import { VoiceBar } from '@/components/VoiceBar';
-import { VoiceReviewSection } from '@/components/VoiceReviewSection';
+import { VoiceReviewSection, type VoiceReviewCounts } from '@/components/VoiceReviewSection';
+import { commitAllApprovable } from '@/ai/commitOperation';
 import {
   getMonthlySummary,
   getSpendingByCategory,
@@ -70,9 +71,11 @@ export default function HomeScreen() {
   const [spending, setSpending] = useState<CategorySpending[]>([]);
   const [templates, setTemplates] = useState<RecurringTemplate[]>([]);
   const [owed, setOwed] = useState<PersonWithNet[]>([]);
-  // Voice pending-operation count, reported up by VoiceReviewSection so the
+  // Voice pending-operation counts, reported up by VoiceReviewSection so the
   // single "To review" header/empty state can account for both queues.
-  const [voicePendingCount, setVoicePendingCount] = useState(0);
+  const [voiceCounts, setVoiceCounts] = useState<VoiceReviewCounts>({ total: 0, approvable: 0 });
+  // Bumped after a bulk approve so VoiceReviewSection reloads without re-focus.
+  const [voiceRefresh, setVoiceRefresh] = useState(0);
 
   const reload = useCallback(() => {
     const month = monthKey(new Date());
@@ -105,10 +108,47 @@ export default function HomeScreen() {
     setTransactionStatus(id, status).then(reload);
   };
 
+  // ── "To review" totals — BOTH queues ────────────────────────────────────
+  // Every voice transaction now lives in `pending_operations`, so counting
+  // only `pending` (the manual rows) reported 0 for a queue full of items —
+  // which is why "Approve all" had stopped appearing.
+  const reviewTotal = pending.length + voiceCounts.total;
+  // Manual pending rows were built by a form, so they are complete by
+  // construction; voice operations must pass the gate to count as ready.
+  const readyCount = pending.length + voiceCounts.approvable;
+  const blockedCount = reviewTotal - readyCount;
+  // Never label it "Approve all" when some items cannot be approved.
+  const bulkLabel = readyCount === reviewTotal ? 'Approve all' : `Approve ${readyCount}`;
+
+  /**
+   * Bulk approve spans BOTH queues: manually created pending transactions and
+   * AI-interpreted pending operations. Voice operations still go through the
+   * final safety gate one at a time (`commitAllApprovable`), so anything with a
+   * missing account/category, an unresolved conflict, or a specialized editor
+   * to complete simply stays in the queue — it is never force-committed.
+   */
   const bulkApprove = () => {
-    Alert.alert('Approve all?', `${pending.length} pending transactions will start counting.`, [
+    const detail =
+      blockedCount > 0
+        ? `${readyCount} ready to approve and start counting.\n\n${blockedCount} still need details and will stay in the queue.`
+        : `${readyCount} pending transactions will start counting.`;
+    Alert.alert('Approve all?', detail, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Approve all', onPress: () => approveAllPending().then(reload) },
+      {
+        text: bulkLabel,
+        onPress: () => {
+          void (async () => {
+            try {
+              if (pending.length > 0) await approveAllPending();
+              if (voiceCounts.approvable > 0) await commitAllApprovable();
+            } catch (e) {
+              Alert.alert('Could not approve', String(e));
+            }
+            setVoiceRefresh((n) => n + 1);
+            reload();
+          })();
+        },
+      },
     ]);
   };
 
@@ -148,7 +188,6 @@ export default function HomeScreen() {
   const hasComingUp = upcoming.length > 0 || owedTop.length > 0;
 
   const badgeText = isDark ? colors.bg : colors.onPrimary;
-  const reviewTotal = pending.length + voicePendingCount;
 
   return (
     <View style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.primary }]}>
@@ -158,7 +197,7 @@ export default function HomeScreen() {
           totalBalanceMinor={totalMinor}
           monthIncomeMinor={summary.incomeMinor}
           monthExpenseMinor={summary.expenseMinor}
-          pendingCount={pending.length}
+          pendingCount={reviewTotal}
         />
 
         <View style={[styles.sheet, { backgroundColor: colors.bg }]}>
@@ -177,9 +216,9 @@ export default function HomeScreen() {
                       <Text style={[styles.badgeLabel, { color: badgeText }]}>{reviewTotal}</Text>
                     </View>
                   ) : null}
-                  {pending.length > 1 ? (
+                  {reviewTotal > 1 && readyCount > 0 ? (
                     <Pressable accessibilityRole="button" onPress={bulkApprove} hitSlop={space.sm}>
-                      <Text style={[type.label, { color: colors.primary }]}>Approve all</Text>
+                      <Text style={[type.label, { color: colors.primary }]}>{bulkLabel}</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -187,7 +226,7 @@ export default function HomeScreen() {
             />
             <View style={styles.reviewStack}>
               {/* Voice pending ops (renders nothing when empty) */}
-              <VoiceReviewSection onCountChange={setVoicePendingCount} />
+              <VoiceReviewSection onCountChange={setVoiceCounts} refreshToken={voiceRefresh} />
 
               {pending.length > 0 ? (
                 <View style={styles.queueList}>
@@ -210,7 +249,7 @@ export default function HomeScreen() {
                 </View>
               ) : null}
 
-              {pending.length === 0 && voicePendingCount === 0 ? (
+              {reviewTotal === 0 ? (
                 <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <Feather name="check-circle" size={22} color={colors.textSubtle} />
                   <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
