@@ -8,13 +8,17 @@
  * dependency and a grouped bar chart is a handful of rects. Colour is paired
  * with the legend labels below, never used alone.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import Animated, { useAnimatedProps, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, Line, Polyline, Rect } from 'react-native-svg';
 
 import { formatCompactMinor } from '@/domain/money';
+import { useReduceMotion } from '@/theme/FeedbackContext';
 import { useTheme } from '@/theme/ThemeContext';
-import { layout, space, tabularNums, type } from '@/theme/tokens';
+import { layout, motion, space, tabularNums, type } from '@/theme/tokens';
+
+const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
 export type TrendMode = 'bar' | 'line';
 
@@ -48,7 +52,22 @@ function niceMax(value: number): number {
 
 export function TrendChart({ points, mode }: Props) {
   const { colors } = useTheme();
+  const reduceMotion = useReduceMotion();
   const [width, setWidth] = useState(0);
+
+  // Bars grow up from the baseline when the data changes, so switching period
+  // or filter reads as the chart redrawing rather than teleporting.
+  const grow = useSharedValue(reduceMotion ? 1 : 0);
+  const dataKey = points.map((p) => `${p.key}:${p.expenseMinor}:${p.incomeMinor}`).join('|');
+
+  useEffect(() => {
+    if (reduceMotion) {
+      grow.value = 1;
+      return;
+    }
+    grow.value = 0;
+    grow.value = withTiming(1, { duration: motion.chart });
+  }, [dataKey, reduceMotion, grow]);
 
   const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width);
 
@@ -112,14 +131,14 @@ export function TrendChart({ points, mode }: Props) {
                     const h = Math.max(1, plotH - y(value));
                     const x = i * slotW + slotW / 2 + (si === 0 ? -barW - BAR_GAP / 2 : BAR_GAP / 2);
                     return (
-                      <Rect
+                      <GrowingBar
                         key={`${p.key}-${s.key}`}
                         x={x}
-                        y={plotH - h}
                         width={barW}
-                        height={h}
-                        rx={barW / 2}
-                        fill={s.color}
+                        fullHeight={h}
+                        plotHeight={plotH}
+                        color={s.color}
+                        grow={grow}
                       />
                     );
                   }),
@@ -182,6 +201,38 @@ export function TrendChart({ points, mode }: Props) {
         ))}
       </View>
     </View>
+  );
+}
+
+/** A bar that grows from the baseline. Own component so it can hold a hook. */
+function GrowingBar({
+  x,
+  width,
+  fullHeight,
+  plotHeight,
+  color,
+  grow,
+}: {
+  x: number;
+  width: number;
+  fullHeight: number;
+  plotHeight: number;
+  color: string;
+  grow: { value: number };
+}) {
+  const animatedProps = useAnimatedProps(() => {
+    const h = Math.max(0.01, fullHeight * grow.value);
+    return { y: plotHeight - h, height: h };
+  });
+
+  return (
+    <AnimatedRect
+      animatedProps={animatedProps}
+      x={x}
+      width={width}
+      rx={width / 2}
+      fill={color}
+    />
   );
 }
 

@@ -10,6 +10,7 @@ import type { ComponentProps } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { PressableScale } from '@/components/PressableScale';
+import { hapticTick } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import { layout, minTouchTarget, space, type } from '@/theme/tokens';
 
@@ -37,7 +38,10 @@ export function QuickActions() {
           key={action.label}
           accessibilityRole="button"
           accessibilityLabel={action.label}
-          onPress={() => router.push(action.href)}
+          onPress={() => {
+            hapticTick();
+            router.push(action.href);
+          }}
           scaleTo={0.93}
           style={styles.tile}>
           <View

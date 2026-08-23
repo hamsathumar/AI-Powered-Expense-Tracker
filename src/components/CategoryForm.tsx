@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Category } from '@/domain/types';
+import { hapticTick } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import {
   categoryPalette,
@@ -22,11 +23,31 @@ import {
 
 type FeatherName = ComponentProps<typeof Feather>['name'];
 
+/**
+ * Curated Feather subset, grouped by what people actually spend on so the
+ * picker can be scanned rather than read. Order matters — it is the grid
+ * order — but membership is additive: never remove a name, because saved
+ * categories store the icon string and would render blank.
+ */
 const ICON_OPTIONS: FeatherName[] = [
-  'coffee', 'shopping-cart', 'navigation', 'home', 'zap', 'heart',
-  'shopping-bag', 'film', 'book', 'gift', 'user', 'briefcase',
-  'trending-up', 'pen-tool', 'percent', 'rotate-ccw', 'music', 'globe',
-  'phone', 'truck', 'scissors', 'more-horizontal',
+  // Food & daily
+  'coffee', 'shopping-cart', 'shopping-bag', 'package', 'gift',
+  // Getting around
+  'navigation', 'truck', 'map-pin', 'compass', 'send',
+  // Home & bills
+  'home', 'key', 'zap', 'droplet', 'wifi', 'phone', 'smartphone', 'tool',
+  // Health & self
+  'heart', 'activity', 'thermometer', 'scissors', 'smile', 'shield', 'umbrella',
+  // Leisure
+  'film', 'music', 'headphones', 'tv', 'monitor', 'camera', 'star', 'sun', 'moon',
+  // Work, learning & money
+  'book', 'briefcase', 'award', 'dollar-sign', 'credit-card', 'trending-up',
+  'pie-chart', 'save', 'percent', 'globe', 'cloud', 'server',
+  // People & time
+  'user', 'users', 'calendar', 'clock', 'bell', 'rotate-ccw',
+  // Everything else
+  'tag', 'bookmark', 'flag', 'box', 'archive', 'layers', 'anchor', 'feather',
+  'battery', 'wind', 'life-buoy', 'pen-tool', 'more-horizontal',
 ];
 
 export interface CategoryFormValues {
@@ -106,7 +127,10 @@ export function CategoryForm({ title, initial, onSubmit, onArchive }: Props) {
                 key={option}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
-                onPress={() => setIcon(option)}
+                onPress={() => {
+                  hapticTick();
+                  setIcon(option);
+                }}
                 style={[
                   styles.cell,
                   {
@@ -131,7 +155,10 @@ export function CategoryForm({ title, initial, onSubmit, onArchive }: Props) {
                 key={swatch}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
-                onPress={() => setColor(swatch)}
+                onPress={() => {
+                  hapticTick();
+                  setColor(swatch);
+                }}
                 style={[
                   styles.cell,
                   { backgroundColor: swatch, borderColor: selected ? colors.text : 'transparent' },

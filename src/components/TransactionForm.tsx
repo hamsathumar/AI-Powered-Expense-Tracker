@@ -46,6 +46,7 @@ import type {
   Transaction,
   TransactionType,
 } from '@/domain/types';
+import { hapticError, hapticSuccess } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import { keypadShadow, layout, radius, screenPaddingH, space, type } from '@/theme/tokens';
 
@@ -198,13 +199,18 @@ export function TransactionForm({ title, submitLabel, initial, onSubmit }: Props
   const save = async () => {
     const result = buildTransaction();
     if (typeof result === 'string') {
+      // A validation stop deserves a different feel from a failure — you did
+      // nothing wrong, the form just isn't complete.
+      hapticError();
       Alert.alert('Not quite', result);
       return;
     }
     setSaving(true);
     try {
       await onSubmit(result);
+      hapticSuccess();
     } catch (e) {
+      hapticError();
       Alert.alert('Save failed', String(e));
       setSaving(false);
     }

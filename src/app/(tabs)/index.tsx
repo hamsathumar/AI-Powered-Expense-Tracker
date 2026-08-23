@@ -9,7 +9,7 @@ import { Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
 import { Amount } from '@/components/Amount';
@@ -40,6 +40,8 @@ import {
   type TransactionListItem,
 } from '@/db/queries/transactions';
 import type { RecurringTemplate } from '@/domain/types';
+import { hapticTick } from '@/lib/haptics';
+import { ScreenFade } from '@/components/motion/ScreenFade';
 import { usePendingCount } from '@/state/PendingCount';
 import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
@@ -64,6 +66,7 @@ export default function HomeScreen() {
   const { symbol } = useCurrency();
   const { refresh: refreshBadge } = usePendingCount();
 
+  const [refreshing, setRefreshing] = useState(false);
   const [pending, setPending] = useState<TransactionListItem[]>([]);
   const [todayItems, setTodayItems] = useState<TransactionListItem[]>([]);
   const [totalMinor, setTotalMinor] = useState(0);
@@ -189,9 +192,27 @@ export default function HomeScreen() {
 
   const badgeText = isDark ? colors.bg : colors.onPrimary;
 
+  const onRefresh = () => {
+    hapticTick();
+    setRefreshing(true);
+    reload();
+    setRefreshing(false);
+  };
+
   return (
     <View style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.primary }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <ScreenFade>
+        <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.onPrimary}
+            colors={[colors.primary]}
+          />
+        }>
         <BalanceCanopy
           monthLabel={format(new Date(), 'MMMM')}
           totalBalanceMinor={totalMinor}
@@ -383,7 +404,8 @@ export default function HomeScreen() {
 
           <View style={{ height: bottomClearance.home }} />
         </View>
-      </ScrollView>
+        </ScrollView>
+      </ScreenFade>
 
       <View style={styles.voiceBar}>
         <VoiceBar

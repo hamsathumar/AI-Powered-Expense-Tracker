@@ -6,11 +6,13 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { evaluateRecurringTemplates } from '@/db/queries/recurring';
 import { PendingCountProvider, usePendingCount } from '@/state/PendingCount';
 import { VoiceJobsProvider } from '@/state/VoiceJobs';
 import { CurrencyProvider } from '@/theme/CurrencyContext';
+import { FeedbackProvider } from '@/theme/FeedbackContext';
 import { ThemeProvider, useTheme } from '@/theme/ThemeContext';
 
 // Keep the native splash visible until fonts are ready — avoids a flash of
@@ -77,18 +79,24 @@ export default function RootLayout() {
   }
 
   return (
-    <ThemeProvider>
-      <CurrencyProvider>
-        <PendingCountProvider>
-          {/* TC-027: voice parses are owned here, above the router, so they
-              survive leaving the voice screen and being killed by iOS. */}
-          <VoiceJobsProvider>
-            <RecurringEvaluator />
-            <StatusBar style="auto" />
-            <RootStack />
-          </VoiceJobsProvider>
-        </PendingCountProvider>
-      </CurrencyProvider>
-    </ThemeProvider>
+    // Required for swipe actions on rows — gesture-handler needs this at the
+    // root, and without it gestures silently never fire.
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <CurrencyProvider>
+          <FeedbackProvider>
+            <PendingCountProvider>
+            {/* TC-027: voice parses are owned here, above the router, so they
+                survive leaving the voice screen and being killed by iOS. */}
+              <VoiceJobsProvider>
+                <RecurringEvaluator />
+                <StatusBar style="auto" />
+                <RootStack />
+              </VoiceJobsProvider>
+            </PendingCountProvider>
+          </FeedbackProvider>
+        </CurrencyProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }

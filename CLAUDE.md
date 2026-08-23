@@ -133,7 +133,22 @@ or category breakdowns.
   `migrations.ts`. **Add report SQL there, not inline** — a `GROUP BY` on an
   output alias shipped broken precisely because no test ever ran the SQL.
 
+- **Feel pass ✅ (2026-08-23):** motion + haptics applied across the app, not
+  just the voice flow. `src/theme/FeedbackContext.tsx` owns the two prefs
+  (haptics on/off, motion full/reduced) and resolves them against the OS
+  reduce-motion request — **the OS always wins**; the app switch can only
+  reduce further. Haptics are gated in one place (`lib/haptics.setHapticsEnabled`)
+  so non-component code can fire them. Durations live in `tokens.motion` —
+  never hardcode a millisecond. New: `ScreenFade` (tab content entrance —
+  the Tabs navigator stays on instant switching, see below), `AnimatedAmount`
+  (count-up, pure maths in `domain/countUp.ts`), `SwipeableRow` (needs the
+  `GestureHandlerRootView` now mounted in `_layout`), `TransactionPeek`
+  (long-press). Sliding indicators on SegmentedControl/TypeSelector, donut
+  sweep-in, trend bars growing, pull-to-refresh on Home/Accounts/Reports.
+  **Do not re-add `animation: 'shift'` to the Tabs navigator** — it caused the
+  blank-tab regression; animate content with `ScreenFade` instead.
+
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 236 tests). Gemini model name is user-editable in Settings —
+(`npm test` — 309 tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

@@ -9,12 +9,14 @@
  */
 import { Feather } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { PressableScale } from '@/components/PressableScale';
 
 import { Amount } from '@/components/Amount';
 import { formatPercent } from '@/domain/money';
 import { useTheme } from '@/theme/ThemeContext';
-import { layout, radius, space, tabularNums, type } from '@/theme/tokens';
+import { layout, motion, radius, space, tabularNums, type } from '@/theme/tokens';
 
 export interface BreakdownRowData {
   id: string;
@@ -41,17 +43,14 @@ export function BreakdownRow({ row, barFraction, selected, onPress, onLongPress 
   const fill = Math.max(0.02, Math.min(1, barFraction));
 
   return (
-    <Pressable
+    <PressableScale
+      scaleTo={motion.pressScale.card}
       accessibilityRole="button"
       accessibilityLabel={`${row.name}, ${formatPercent(row.share, 1)}, ${row.txCount} transaction${row.txCount === 1 ? '' : 's'}`}
       accessibilityState={{ selected }}
       onPress={onPress}
       onLongPress={onLongPress}
-      style={({ pressed }) => [
-        styles.row,
-        selected && { backgroundColor: colors.surfaceAlt },
-        pressed && styles.pressed,
-      ]}>
+      style={[styles.row, selected && { backgroundColor: colors.surfaceAlt }]}>
       <View style={styles.head}>
         <View style={[styles.iconTile, { backgroundColor: `${row.color}1F` }]}>
           <Feather
@@ -81,7 +80,7 @@ export function BreakdownRow({ row, barFraction, selected, onPress, onLongPress 
         <View style={[styles.fill, { backgroundColor: row.color, flex: fill }]} />
         <View style={{ flex: 1 - fill }} />
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -92,7 +91,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.sm,
     borderRadius: radius.md,
   },
-  pressed: { opacity: 0.7 },
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   iconTile: {
     width: layout.iconTile.size,

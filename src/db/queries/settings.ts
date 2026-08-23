@@ -31,6 +31,8 @@ export const SETTINGS_KEYS = {
   profileName: 'profile_name',
   profilePhotoUri: 'profile_photo_uri',
   appearance: 'appearance',
+  haptics: 'haptics',
+  motion: 'motion',
 } as const;
 
 /** Theme preference: follow the system, or force light/dark (v2 §5.10). */
@@ -40,6 +42,24 @@ export const DEFAULT_APPEARANCE: AppearanceMode = 'system';
 export async function getAppearance(): Promise<AppearanceMode> {
   const stored = await getSetting(SETTINGS_KEYS.appearance);
   return stored === 'light' || stored === 'dark' ? stored : 'system';
+}
+
+/**
+ * Feel preferences (Settings → Appearance). Haptics and motion are
+ * enhancements, so both default to on and degrade silently — but a money app
+ * gets used in meetings and in bed, so both need an off switch that does not
+ * depend on changing an iOS system setting.
+ */
+export type MotionMode = 'system' | 'reduced' | 'full';
+export const DEFAULT_MOTION: MotionMode = 'system';
+
+export async function getHapticsEnabled(): Promise<boolean> {
+  return (await getSetting(SETTINGS_KEYS.haptics)) !== 'off';
+}
+
+export async function getMotionMode(): Promise<MotionMode> {
+  const stored = await getSetting(SETTINGS_KEYS.motion);
+  return stored === 'reduced' || stored === 'full' ? stored : 'system';
 }
 
 /**

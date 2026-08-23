@@ -14,6 +14,7 @@ import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Amount } from '@/components/Amount';
+import { AnimatedAmount } from '@/components/AnimatedAmount';
 import { formatPercent } from '@/domain/money';
 import { useTheme } from '@/theme/ThemeContext';
 import { layout, radius, shadow, space, tabularNums, type } from '@/theme/tokens';
@@ -107,7 +108,7 @@ export function QuickInsights({ data, onPressTopCategory, onPressLargest }: Prop
         </View>
         <View style={styles.half}>
           <Tile icon="calendar" tint={colors.primary} label="Avg. daily">
-            <Amount valueMinor={avgDailyMinor} textStyle={type.amount} colorOverride={colors.text} />
+            <AnimatedAmount valueMinor={avgDailyMinor} textStyle={type.amount} colorOverride={colors.text} />
           </Tile>
         </View>
       </View>

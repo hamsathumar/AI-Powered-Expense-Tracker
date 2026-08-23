@@ -11,6 +11,8 @@ import { useCallback, useState, type ComponentProps } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenFade } from '@/components/motion/ScreenFade';
+
 import { hasGeminiApiKey } from '@/ai/secureConfig';
 import { getProfile, setSetting, SETTINGS_KEYS } from '@/db/queries/settings';
 import { pickProfilePhoto, deleteProfilePhoto } from '@/services/profilePhoto';
@@ -75,7 +77,8 @@ export default function SettingsScreen() {
       // and leaves a dead strip above the tab bar.
       edges={['top', 'left', 'right']}
       style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScreenFade>
+        <ScrollView contentContainerStyle={styles.container}>
         <Text style={[type.h1, { color: colors.text }]}>Settings</Text>
 
         <View style={styles.profile}>
@@ -125,7 +128,8 @@ export default function SettingsScreen() {
             </Pressable>
           ))}
         </View>
-      </ScrollView>
+        </ScrollView>
+      </ScreenFade>
     </SafeAreaView>
   );
 }

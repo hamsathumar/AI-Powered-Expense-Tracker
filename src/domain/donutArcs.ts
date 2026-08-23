@@ -73,6 +73,7 @@ export function polarPoint(
   radius: number,
   angle: number,
 ): { x: number; y: number } {
+  'worklet';
   return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
 }
 
@@ -88,6 +89,9 @@ export function annularSectorPath(
   startAngle: number,
   endAngle: number,
 ): string {
+  // 'worklet' so the sweep-in animation can rebuild the path on the UI thread
+  // each frame; the function stays callable from JS exactly as before.
+  'worklet';
   const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
   const outerStart = polarPoint(cx, cy, outerRadius, startAngle);
   const outerEnd = polarPoint(cx, cy, outerRadius, endAngle);

@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { StyleSheet, type ColorValue } from 'react-native';
 
+import { hapticTick } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily } from '@/theme/tokens';
 
@@ -26,6 +27,16 @@ export default function TabsLayout() {
 
   return (
     <Tabs
+      // A tick only when the tab actually CHANGES. tabPress also fires when you
+      // tap the tab you are already on (which scrolls to top), and buzzing for
+      // that would be feedback for nothing happening.
+      screenListeners={({ navigation, route }) => ({
+        tabPress: () => {
+          const state = navigation.getState();
+          const alreadyHere = state.routes[state.index]?.key === route.key;
+          if (!alreadyHere) hapticTick();
+        },
+      })}
       screenOptions={{
         headerShown: false,
         // NOTE: `animation: 'shift'` was removed — it intermittently left a tab

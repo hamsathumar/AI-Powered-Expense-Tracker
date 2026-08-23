@@ -8,8 +8,9 @@ import type { ComponentProps } from 'react';
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 import { PressableScale } from '@/components/PressableScale';
+import { hapticPress } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
-import { shadow } from '@/theme/tokens';
+import { motion, shadow } from '@/theme/tokens';
 
 interface Props {
   icon: ComponentProps<typeof Feather>['name'];
@@ -20,14 +21,19 @@ interface Props {
 }
 
 export function Fab({ icon, onPress, accessibilityLabel, size = 60, style }: Props) {
+  // A FAB is always a committing action, so it always taps back.
+  const press = () => {
+    hapticPress();
+    onPress();
+  };
   const { colors, isDark } = useTheme();
 
   return (
     <PressableScale
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      scaleTo={0.9}
+      onPress={press}
+      scaleTo={motion.pressScale.fab}
       style={[
         styles.base,
         { width: size, height: size, borderRadius: size / 2, backgroundColor: colors.primary },

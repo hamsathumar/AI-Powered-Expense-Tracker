@@ -11,7 +11,7 @@
 import { Feather } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Amount } from '@/components/Amount';
+import { AnimatedAmount } from '@/components/AnimatedAmount';
 import { formatAmount } from '@/domain/money';
 import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
@@ -49,7 +49,7 @@ export function BalanceSummaryCard({ totalBalanceMinor, income, expense, compari
     <View style={[styles.card, { backgroundColor: colors.surface }, !isDark && shadow]}>
       <View style={styles.totalRow}>
         <Text style={[type.h2, { color: colors.text }]}>Total balance</Text>
-        <Amount valueMinor={totalBalanceMinor} textStyle={type.display} />
+        <AnimatedAmount valueMinor={totalBalanceMinor} textStyle={type.display} />
       </View>
 
       <View style={styles.tiles}>
@@ -89,7 +89,7 @@ export function BalanceSummaryCard({ totalBalanceMinor, income, expense, compari
                 ) : null}
               </View>
 
-              <Amount
+              <AnimatedAmount
                 valueMinor={metric.currentMinor}
                 textStyle={type.amount}
                 colorOverride={colors.text}

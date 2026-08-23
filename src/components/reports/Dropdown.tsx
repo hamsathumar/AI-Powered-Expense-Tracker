@@ -12,6 +12,7 @@ import { Feather } from '@expo/vector-icons';
 import { useRef, useState } from 'react';
 import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { hapticTick } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import { layout, minTouchTarget, radius, shadow, space, type } from '@/theme/tokens';
 
@@ -93,6 +94,7 @@ export function Dropdown<T extends string>({
                     accessibilityRole="button"
                     accessibilityState={{ selected: isSelected }}
                     onPress={() => {
+                      if (!isSelected) hapticTick();
                       onChange(option.value);
                       setAnchor(null);
                     }}

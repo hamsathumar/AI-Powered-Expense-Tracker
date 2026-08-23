@@ -19,11 +19,12 @@
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DonutChart } from '@/components/DonutChart';
 import { Fab } from '@/components/Fab';
+import { ScreenFade } from '@/components/motion/ScreenFade';
 import { BalanceSummaryCard } from '@/components/reports/BalanceSummaryCard';
 import { BreakdownRow } from '@/components/reports/BreakdownRow';
 import { Dropdown } from '@/components/reports/Dropdown';
@@ -63,6 +64,7 @@ import {
   shiftPeriod,
 } from '@/domain/reportRange';
 import type { Account, Category, Person } from '@/domain/types';
+import { hapticPress, hapticTick } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import {
   bottomClearance,
@@ -117,6 +119,7 @@ export default function ReportsScreen() {
   const [trendMode, setTrendMode] = useState<TrendMode>('bar');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [totalBalanceMinor, setTotalBalanceMinor] = useState(0);
   const [summary, setSummary] = useState<RangeSummary>(EMPTY_SUMMARY);
@@ -235,7 +238,22 @@ export default function ReportsScreen() {
       // and leaves a dead strip above the tab bar.
       edges={['top', 'left', 'right']}
       style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScreenFade>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                hapticTick();
+                setRefreshing(true);
+                reload();
+                setRefreshing(false);
+              }}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }>
         <Text style={[type.h1, { color: colors.text }]}>Reports</Text>
 
         {/* Period switcher */}
@@ -243,7 +261,10 @@ export default function ReportsScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Previous period"
-            onPress={() => setValue((v) => ({ ...v, period: shiftPeriod(v.period, -1) }))}
+            onPress={() => {
+              hapticTick();
+              setValue((v) => ({ ...v, period: shiftPeriod(v.period, -1) }));
+            }}
             style={[styles.periodArrow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Feather name="chevron-left" size={18} color={colors.primary} />
           </Pressable>
@@ -261,7 +282,10 @@ export default function ReportsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Next period"
             disabled={!canGoForward}
-            onPress={() => setValue((v) => ({ ...v, period: shiftPeriod(v.period, 1) }))}
+            onPress={() => {
+              hapticTick();
+              setValue((v) => ({ ...v, period: shiftPeriod(v.period, 1) }));
+            }}
             style={[
               styles.periodArrow,
               { backgroundColor: colors.surface, borderColor: colors.border },
@@ -337,7 +361,10 @@ export default function ReportsScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={mode === 'bar' ? 'Bar chart' : 'Line chart'}
                     accessibilityState={{ selected }}
-                    onPress={() => setTrendMode(mode)}
+                    onPress={() => {
+                      if (!selected) hapticTick();
+                      setTrendMode(mode);
+                    }}
                     style={[styles.modeButton, selected && { backgroundColor: colors.primary }]}>
                     <Feather
                       name={mode === 'bar' ? 'bar-chart-2' : 'activity'}
@@ -375,7 +402,10 @@ export default function ReportsScreen() {
             total={slicesTotalMinor}
             centerLabel={kind === 'expense' ? 'Spending' : 'Income'}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={(id) => {
+              hapticTick();
+              setSelectedId(id);
+            }}
             segments={slices.map((s) => ({
               id: s.id,
               label: s.name,
@@ -447,13 +477,17 @@ export default function ReportsScreen() {
             {DIM_OPTIONS.find((o) => o.value === dim)?.label.toLowerCase() ?? dim}.
           </Text>
         ) : null}
-      </ScrollView>
+        </ScrollView>
+      </ScreenFade>
 
       <Fab
         icon="filter"
         accessibilityLabel="Filter reports"
         size={layout.fabSm}
-        onPress={() => setFilterOpen(true)}
+        onPress={() => {
+          hapticPress();
+          setFilterOpen(true);
+        }}
         style={[styles.fab, { bottom: layout.reports.filterFabBottom }]}
       />
       {filtered ? (

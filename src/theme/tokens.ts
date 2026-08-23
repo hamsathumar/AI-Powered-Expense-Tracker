@@ -98,11 +98,20 @@ export const darkColors: ThemeColors = {
 export type ThemeColors = { [K in keyof typeof lightColors]: string };
 
 /**
- * Category colours (design-system.md §2.6): a fixed 12-option palette for
- * user-assignable category colours — vibrant but harmonious, distinct from
- * the semantic colours, and distinguishable as pie/donut segments.
+ * Category colours (design-system.md §2.6). Vibrant but harmonious, distinct
+ * from the semantic colours, and — the constraint that really matters —
+ * distinguishable from each other as donut segments.
+ *
+ * Expanded from the doc's original 12 to 24 (2026-08-23, by request). The
+ * first 12 are unchanged and in their original order, so existing categories
+ * keep the exact colour they were saved with. New entries are appended, never
+ * inserted, for the same reason.
+ *
+ * Ordered as light → dark within each hue family so the picker grid reads as
+ * a spectrum rather than a jumble.
  */
 export const categoryPalette = [
+  // --- original 12 (do not reorder: stored categories reference these) ---
   '#D1462F', // coral-red
   '#EE7D30', // orange
   '#F2A925', // amber
@@ -115,6 +124,20 @@ export const categoryPalette = [
   '#C74FB0', // magenta
   '#E0698F', // rose
   '#9C7A5A', // warm taupe
+
+  // --- added 2026-08-23 ---
+  '#B3243C', // crimson
+  '#F2765C', // salmon
+  '#C9A227', // mustard
+  '#6E8B3D', // olive
+  '#4FC08D', // mint
+  '#12B5C9', // cyan
+  '#4A7A96', // steel blue
+  '#2B4C8C', // navy
+  '#A98CF0', // lavender
+  '#8E3B7A', // plum
+  '#C4715A', // clay
+  '#6B7280', // slate
 ] as const;
 
 /**
@@ -230,6 +253,30 @@ export const layout = {
  *  view under the voice bar / a FAB needs at least this much bottom spacer so
  *  nothing scrolls beneath a floating control. */
 export const bottomClearance = { home: 200, accounts: 150, reports: 100 } as const;
+
+/**
+ * Motion (design-system.md §7) — "calm and quick. Motion confirms actions; it
+ * never performs." These are the only durations in the app; never hardcode a
+ * millisecond value in a component.
+ *
+ * Every animation must degrade when `useReduceMotion()` is true — the OS
+ * accessibility request always wins.
+ */
+export const motion = {
+  /** Press-in / press-out scale (§7: 90–140ms). */
+  pressIn: 90,
+  pressOut: 140,
+  /** Chip and segment selection — background/indicator movement. */
+  select: 150,
+  /** List rows appearing, screen content entering. */
+  enter: 200,
+  /** Rows re-flowing after a filter change. */
+  layout: 220,
+  /** Charts drawing themselves in, numbers counting up. */
+  chart: 420,
+  /** Scale targets, so press feedback is uniform app-wide. */
+  pressScale: { control: 0.97, card: 0.98, fab: 0.9 },
+} as const;
 
 // ---------------------------------------------------------------------------
 // Typography (design-system.md §3)

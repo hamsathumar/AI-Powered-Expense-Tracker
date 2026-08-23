@@ -14,9 +14,10 @@ import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Amount } from '@/components/Amount';
+import { PressableScale } from '@/components/PressableScale';
 import type { Account, AccountType } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
-import { layout, minTouchTarget, radius, shadow, space, type } from '@/theme/tokens';
+import { layout, minTouchTarget, motion, radius, shadow, space, type } from '@/theme/tokens';
 
 type ColorKey = 'accountBank' | 'accountCard' | 'accountCash';
 
@@ -45,7 +46,8 @@ export function AccountCard({ account, balanceMinor, selected, onPress, onEdit }
   const subtitle = [meta.label, account.ownerLabel].filter(Boolean).join(' · ');
 
   return (
-    <Pressable
+    <PressableScale
+      scaleTo={motion.pressScale.card}
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
@@ -89,7 +91,7 @@ export function AccountCard({ account, balanceMinor, selected, onPress, onEdit }
           </Pressable>
         </View>
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 

@@ -25,17 +25,23 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   SectionList,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountCard } from '@/components/AccountCard';
 import { Fab } from '@/components/Fab';
+import { ScreenFade } from '@/components/motion/ScreenFade';
+import { PressableScale } from '@/components/PressableScale';
+import { SwipeableRow } from '@/components/SwipeableRow';
 import { TransactionFilterSheet } from '@/components/TransactionFilterSheet';
+import { TransactionPeek } from '@/components/TransactionPeek';
 import { TransactionRow } from '@/components/TransactionRow';
 import { listAccountBalancesMinor, listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
@@ -44,16 +50,24 @@ import {
   hasActiveTransactionFilter,
   type TransactionFilter,
 } from '@/db/queries/transactionFilterSql';
-import { listTransactionItems, type TransactionListItem } from '@/db/queries/transactions';
+import {
+  deleteTransaction,
+  listTransactionItems,
+  setTransactionStatus,
+  type TransactionListItem,
+} from '@/db/queries/transactions';
 import { accountDeltaMinor } from '@/domain/accountActivity';
 import { formatAmount } from '@/domain/money';
 import type { Account, Category, Person } from '@/domain/types';
+import { hapticError, hapticPress, hapticSuccess, hapticTick } from '@/lib/haptics';
+import { usePendingCount } from '@/state/PendingCount';
 import { shareTransactionsCsv } from '@/services/transactionCsv';
 import { useTheme } from '@/theme/ThemeContext';
 import {
   bottomClearance,
   fontFamily,
   layout,
+  motion,
   minTouchTarget,
   radius,
   screenPaddingH,
@@ -87,6 +101,9 @@ export default function AccountsScreen() {
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [peekItem, setPeekItem] = useState<TransactionListItem | null>(null);
+  const { refresh: refreshPendingCount } = usePendingCount();
 
   // One definition of "what is being listed", shared by the list and the export.
   const activeFilter: TransactionFilter = useMemo(() => ({ ...filter, search }), [filter, search]);
@@ -127,8 +144,51 @@ export default function AccountsScreen() {
   const selectedAccount = accounts.find((a) => a.id === filter.accountId) ?? null;
   const filtersActive = hasActiveTransactionFilter(filter);
 
-  const setAccountFilter = (accountId: string | null) =>
+  const setAccountFilter = (accountId: string | null) => {
+    hapticTick();
     setFilter((f) => ({ ...f, accountId: f.accountId === accountId ? null : accountId }));
+  };
+
+  const onRefresh = async () => {
+    hapticTick();
+    setRefreshing(true);
+    loadReference();
+    loadTransactions();
+    setRefreshing(false);
+  };
+
+  /** Swipe-committed status change on a pending row. */
+  const onSwipeStatus = (item: TransactionListItem, status: 'approved' | 'rejected') => {
+    setTransactionStatus(item.tx.id, status)
+      .then(() => {
+        if (status === 'approved') hapticSuccess();
+        else hapticError();
+        refreshPendingCount();
+        loadReference();
+        loadTransactions();
+      })
+      .catch((e) => Alert.alert('Could not update', String(e)));
+  };
+
+  /** Deleting is not undoable, so it always asks — a swipe is easy to do by accident. */
+  const onSwipeDelete = (item: TransactionListItem) => {
+    Alert.alert('Delete transaction?', `"${item.tx.name}" will be removed permanently.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          deleteTransaction(item.tx.id)
+            .then(() => {
+              hapticError();
+              refreshPendingCount();
+              loadReference();
+              loadTransactions();
+            })
+            .catch((e) => Alert.alert('Could not delete', String(e))),
+      },
+    ]);
+  };
 
   /**
    * Export exactly what the ledger is showing — no filter means everything.
@@ -137,12 +197,15 @@ export default function AccountsScreen() {
    */
   const onExport = async () => {
     if (exporting) return;
+    hapticPress();
     setExporting(true);
     try {
       const rows = await listTransactionItems(activeFilter);
       // The iOS share sheet is its own confirmation — no success alert needed.
       await shareTransactionsCsv(rows, filter.accountId ?? undefined);
+      hapticSuccess();
     } catch (e) {
+      hapticError();
       Alert.alert('Export failed', e instanceof Error ? e.message : String(e));
     } finally {
       setExporting(false);
@@ -239,13 +302,22 @@ export default function AccountsScreen() {
       // and leaves a dead strip above the tab bar.
       edges={['top', 'left', 'right']}
       style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <SectionList
+      <ScreenFade>
+        <SectionList
         sections={sections}
         keyExtractor={(item) => item.tx.id}
         contentContainerStyle={styles.list}
         stickySectionHeadersEnabled={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
         ListHeaderComponent={header}
         renderSectionHeader={({ section }) => (
           <View style={styles.dayHeader}>
@@ -256,23 +328,64 @@ export default function AccountsScreen() {
             </Text>
           </View>
         )}
-        renderItem={({ item }) => (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() =>
-              router.push({ pathname: '/transaction/detail/[id]', params: { id: item.tx.id } })
-            }>
-            <TransactionRow item={item} />
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const pending = item.tx.status === 'pending';
+          return (
+            <Animated.View layout={LinearTransition.duration(motion.layout)}>
+              <SwipeableRow
+                // Pending rows can be triaged in place; anything else can only
+                // be deleted, which still asks first.
+                left={
+                  pending
+                    ? {
+                        icon: 'check',
+                        label: 'Approve',
+                        color: colors.positiveFill,
+                        onTrigger: () => onSwipeStatus(item, 'approved'),
+                      }
+                    : undefined
+                }
+                right={
+                  pending
+                    ? {
+                        icon: 'x',
+                        label: 'Reject',
+                        color: colors.warning,
+                        onTrigger: () => onSwipeStatus(item, 'rejected'),
+                      }
+                    : {
+                        icon: 'trash-2',
+                        label: 'Delete',
+                        color: colors.danger,
+                        onTrigger: () => onSwipeDelete(item),
+                      }
+                }>
+                <PressableScale
+                  accessibilityRole="button"
+                  accessibilityHint="Long press for a quick preview"
+                  scaleTo={motion.pressScale.card}
+                  onPress={() =>
+                    router.push({ pathname: '/transaction/detail/[id]', params: { id: item.tx.id } })
+                  }
+                  onLongPress={() => {
+                    hapticPress();
+                    setPeekItem(item);
+                  }}>
+                  <TransactionRow item={item} />
+                </PressableScale>
+              </SwipeableRow>
+            </Animated.View>
+          );
+        }}
         ListEmptyComponent={
           accounts.length > 0 ? (
             <Text style={[type.caption, styles.emptyText, { color: colors.textSubtle }]}>
               {search || filtersActive ? 'No matching transactions.' : 'No transactions yet.'}
             </Text>
           ) : null
-        }
-      />
+          }
+        />
+      </ScreenFade>
 
       {/* Floating ledger controls. KeyboardAvoidingView measures its own frame,
           so it lifts the bar by exactly the keyboard's overlap — which also
@@ -320,7 +433,10 @@ export default function AccountsScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Filter transactions"
-              onPress={() => setFilterOpen(true)}
+              onPress={() => {
+                hapticTick();
+                setFilterOpen(true);
+              }}
               style={({ pressed }) => [
                 styles.filterButton,
                 { backgroundColor: colors.surface, borderColor: colors.border },
@@ -340,6 +456,15 @@ export default function AccountsScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <TransactionPeek
+        item={peekItem}
+        onClose={() => setPeekItem(null)}
+        onOpenDetail={(id) => {
+          setPeekItem(null);
+          router.push({ pathname: '/transaction/detail/[id]', params: { id } });
+        }}
+      />
 
       <TransactionFilterSheet
         visible={filterOpen}

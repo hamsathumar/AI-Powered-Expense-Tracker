@@ -11,13 +11,28 @@
  * was ever selectable. The geometry lives in `domain/donutArcs.ts` and is
  * unit-tested there.
  */
+import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import Animated, { useAnimatedProps, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 
-import { Amount } from '@/components/Amount';
-import { annularSectorPath, buildArcs, midAngle, polarPoint } from '@/domain/donutArcs';
+import { AnimatedAmount } from '@/components/AnimatedAmount';
+import {
+  annularSectorPath,
+  buildArcs,
+  midAngle,
+  polarPoint,
+  type DonutArc,
+} from '@/domain/donutArcs';
+import { useReduceMotion } from '@/theme/FeedbackContext';
 import { useTheme } from '@/theme/ThemeContext';
-import { layout, space, type } from '@/theme/tokens';
+import { layout, motion, space, type } from '@/theme/tokens';
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+
+/** 12 o'clock start, matching `buildArcs`. */
+const SWEEP_START = -Math.PI / 2;
+const TAU = Math.PI * 2;
 
 export interface DonutSegment {
   id: string;
@@ -48,8 +63,24 @@ export function DonutChart({ segments, total, selectedId, onSelect, centerLabel 
   const innerRadius = outerRadius - STROKE;
   const midRadius = outerRadius - STROKE / 2;
 
+  const reduceMotion = useReduceMotion();
   const arcs = buildArcs(segments, total);
   const selected = arcs.find((a) => a.id === selectedId) ?? null;
+
+  // One shared clock drives every slice: the donut draws itself clockwise from
+  // 12 o'clock. Keyed on the segment set so it replays when the grouping or
+  // the filter changes, not on every unrelated re-render.
+  const sweep = useSharedValue(reduceMotion ? 1 : 0);
+  const sweepKey = arcs.map((a) => `${a.id}:${a.value}`).join('|');
+
+  useEffect(() => {
+    if (reduceMotion) {
+      sweep.value = 1;
+      return;
+    }
+    sweep.value = 0;
+    sweep.value = withTiming(1, { duration: motion.chart });
+  }, [sweepKey, reduceMotion, sweep]);
 
   return (
     <View style={styles.wrap}>
@@ -65,18 +96,14 @@ export function DonutChart({ segments, total, selectedId, onSelect, centerLabel 
         />
 
         {arcs.map((arc) => (
-          <Path
+          <DonutSlice
             key={arc.id}
-            d={annularSectorPath(
-              center,
-              center,
-              outerRadius,
-              innerRadius,
-              arc.startAngle,
-              arc.endAngle,
-            )}
-            fill={arc.color}
-            opacity={selectedId != null && selectedId !== arc.id ? 0.3 : 1}
+            arc={arc}
+            center={center}
+            outerRadius={outerRadius}
+            innerRadius={innerRadius}
+            sweep={sweep}
+            dimmed={selectedId != null && selectedId !== arc.id}
             onPress={() => onSelect?.(selectedId === arc.id ? null : arc.id)}
           />
         ))}
@@ -107,7 +134,7 @@ export function DonutChart({ segments, total, selectedId, onSelect, centerLabel 
         <Text numberOfLines={2} style={[type.caption, styles.centerLabel, { color: colors.textMuted }]}>
           {selected ? selected.label : centerLabel}
         </Text>
-        <Amount valueMinor={selected ? selected.value : total} textStyle={type.h2} />
+        <AnimatedAmount valueMinor={selected ? selected.value : total} textStyle={type.h2} />
         {selected ? (
           <Text style={[type.caption, { color: colors.textSubtle }]}>
             {Math.round(selected.fraction * 100)}% of total
@@ -115,6 +142,47 @@ export function DonutChart({ segments, total, selectedId, onSelect, centerLabel 
         ) : null}
       </View>
     </View>
+  );
+}
+
+/**
+ * One wedge. Its own component because the sweep needs a hook per slice, and a
+ * hook cannot live inside a map.
+ */
+function DonutSlice({
+  arc,
+  center,
+  outerRadius,
+  innerRadius,
+  sweep,
+  dimmed,
+  onPress,
+}: {
+  arc: DonutArc;
+  center: number;
+  outerRadius: number;
+  innerRadius: number;
+  sweep: { value: number };
+  dimmed: boolean;
+  onPress: () => void;
+}) {
+  const animatedProps = useAnimatedProps(() => {
+    // Reveal clockwise: this slice is clipped to however far the sweep has got.
+    const revealedTo = SWEEP_START + sweep.value * TAU;
+    const end = Math.min(arc.endAngle, revealedTo);
+    if (end <= arc.startAngle) return { d: '' };
+    return {
+      d: annularSectorPath(center, center, outerRadius, innerRadius, arc.startAngle, end),
+    };
+  });
+
+  return (
+    <AnimatedPath
+      animatedProps={animatedProps}
+      fill={arc.color}
+      opacity={dimmed ? 0.3 : 1}
+      onPress={onPress}
+    />
   );
 }
 

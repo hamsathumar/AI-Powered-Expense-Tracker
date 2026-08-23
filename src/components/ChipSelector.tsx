@@ -2,13 +2,25 @@
  * Wrapping chip selector (design-system.md §5.4) — used for accounts,
  * categories, and people. Shows all options at a glance; selected chip gets
  * a primarySoft background with a primary border. Optional trailing "+ Add".
+ *
+ * Selection cross-fades over 150ms (§7) instead of snapping, and ticks. Each
+ * chip is its own component so it can own the animation hook — a hook can't
+ * live inside the map.
  */
 import { Feather } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useDerivedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
+import { hapticTick } from '@/lib/haptics';
+import { useReduceMotion } from '@/theme/FeedbackContext';
 import { useTheme } from '@/theme/ThemeContext';
-import { layout, minTouchTarget, radius, space, type } from '@/theme/tokens';
+import { layout, minTouchTarget, motion, radius, space, type } from '@/theme/tokens';
 
 export interface ChipItem {
   id: string;
@@ -26,6 +38,52 @@ interface Props {
   onSelect: (id: string) => void;
   onAddNew?: () => void;
   emptyHint?: string;
+}
+
+function Chip({
+  item,
+  selected,
+  onPress,
+}: {
+  item: ChipItem;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const reduceMotion = useReduceMotion();
+
+  const progress = useDerivedValue(() => {
+    const target = selected ? 1 : 0;
+    return reduceMotion ? target : withTiming(target, { duration: motion.select });
+  }, [selected, reduceMotion]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(progress.value, [0, 1], [colors.surface, colors.primarySoft]),
+    borderColor: interpolateColor(progress.value, [0, 1], [colors.border, colors.primary]),
+  }));
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={() => {
+        hapticTick();
+        onPress();
+      }}>
+      <Animated.View style={[styles.chip, animatedStyle]}>
+        {item.icon ? (
+          <Feather
+            name={item.icon}
+            size={14}
+            color={item.color ?? (selected ? colors.primary : colors.textMuted)}
+          />
+        ) : null}
+        <Text style={[type.label, { color: selected ? colors.primary : colors.text }]}>
+          {item.label}
+        </Text>
+      </Animated.View>
+    </Pressable>
+  );
 }
 
 export function ChipSelector({
@@ -47,38 +105,21 @@ export function ChipSelector({
         <Text style={[type.caption, { color: colors.textSubtle }]}>{emptyHint}</Text>
       ) : null}
       <View style={styles.row}>
-        {items.map((item) => {
-          const selected = isSelected(item.id);
-          return (
-            <Pressable
-              key={item.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              onPress={() => onSelect(item.id)}
-              style={[
-                styles.chip,
-                {
-                  backgroundColor: selected ? colors.primarySoft : colors.surface,
-                  borderColor: selected ? colors.primary : colors.border,
-                },
-              ]}>
-              {item.icon ? (
-                <Feather
-                  name={item.icon}
-                  size={14}
-                  color={item.color ?? (selected ? colors.primary : colors.textMuted)}
-                />
-              ) : null}
-              <Text style={[type.label, { color: selected ? colors.primary : colors.text }]}>
-                {item.label}
-              </Text>
-            </Pressable>
-          );
-        })}
+        {items.map((item) => (
+          <Chip
+            key={item.id}
+            item={item}
+            selected={isSelected(item.id)}
+            onPress={() => onSelect(item.id)}
+          />
+        ))}
         {onAddNew ? (
           <Pressable
             accessibilityRole="button"
-            onPress={onAddNew}
+            onPress={() => {
+              hapticTick();
+              onAddNew();
+            }}
             style={[styles.chip, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Feather name="plus" size={14} color={colors.primary} />
             <Text style={[type.label, { color: colors.primary }]}>Add</Text>

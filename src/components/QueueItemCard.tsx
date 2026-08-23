@@ -11,6 +11,8 @@ import { format } from 'date-fns';
 import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { hapticError, hapticSuccess } from '@/lib/haptics';
+
 import { Amount } from '@/components/Amount';
 import type { TransactionListItem } from '@/db/queries/transactions';
 import type { LendingDirection } from '@/domain/types';
@@ -98,7 +100,10 @@ export function QueueItemCard({ item, onApprove, onReject, onEdit }: Props) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Approve"
-          onPress={onApprove}
+          onPress={() => {
+            hapticSuccess();
+            onApprove();
+          }}
           style={[styles.approve, { backgroundColor: colors.positiveFill }]}>
           <Feather name="check" size={15} color={colors.onFilled} />
           <Text style={[styles.approveLabel, { color: colors.onFilled }]}>Approve</Text>
@@ -113,7 +118,10 @@ export function QueueItemCard({ item, onApprove, onReject, onEdit }: Props) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Reject"
-          onPress={onReject}
+          onPress={() => {
+            hapticError();
+            onReject();
+          }}
           style={[styles.iconButton, { borderColor: colors.border }]}>
           <Feather name="x" size={16} color={colors.expense} />
         </Pressable>
