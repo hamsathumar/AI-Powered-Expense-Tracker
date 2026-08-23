@@ -13,13 +13,14 @@ import {
   dailyTotalsSql,
   largestTransactionSql,
   rangeSummarySql,
-  sliceAllTimeStatsSql,
+  sliceExtentSql,
   sliceLargestNameSql,
-  slicePeriodStatsSql,
+  sliceStatsSql,
   sliceTransactionIdsSql,
   type BreakdownDim,
   type ReportFilter,
   type ReportKind,
+  type SliceScope,
 } from '@/db/queries/reportSql';
 
 /** "2026-08" for the device-local month of the given date. */
@@ -144,6 +145,7 @@ export type {
   BreakdownDim,
   ReportFilter,
   ReportKind,
+  SliceScope,
 } from '@/db/queries/reportSql';
 
 export interface RangeSummary {
@@ -223,56 +225,61 @@ export async function getBreakdown(
 }
 
 export interface SliceStats {
-  /** In the active period, under the active filter. */
+  /** For the requested scope: the active period, or all history. */
   totalMinor: number;
   txCount: number;
-  /** Mean transaction size in the period (0 when there are none). */
+  /** Mean transaction size in that scope (0 when there are none). */
   averageMinor: number;
   largestMinor: number;
   largestName: string | null;
-  /** Ignores the period AND the rest of the filter — a true lifetime figure. */
+  /** Always all-history, whatever the scope — shown as context. */
   allTimeTotalMinor: number;
   allTimeCount: number;
-  /** UTC timestamp of the most recent row of this slice, ever. */
+  /** UTC timestamps of the first and most recent rows of this slice, ever. */
+  firstOccurredAt: string | null;
   lastOccurredAt: string | null;
 }
 
-/** Stat grid for the drill-down screen. */
+/** Stat grid for the drill-down screen, for one scope. */
 export async function getSliceStats(
   filter: ReportFilter,
   dim: BreakdownDim,
   sliceId: string,
   kind: ReportKind,
+  scope: SliceScope,
 ): Promise<SliceStats> {
   const db = await getDb();
 
-  const periodStmt = slicePeriodStatsSql(filter, dim, sliceId, kind);
-  const largestStmt = sliceLargestNameSql(filter, dim, sliceId, kind);
-  const allTimeStmt = sliceAllTimeStatsSql(dim, sliceId, kind);
+  const statsStmt = sliceStatsSql(filter, dim, sliceId, kind, scope);
+  const largestStmt = sliceLargestNameSql(filter, dim, sliceId, kind, scope);
+  const extentStmt = sliceExtentSql(dim, sliceId, kind);
 
-  const [period, largest, allTime] = await Promise.all([
+  const [stats, largest, extent] = await Promise.all([
     db.getFirstAsync<{ totalMinor: number; txCount: number; largestMinor: number }>(
-      periodStmt.sql,
-      ...periodStmt.params,
+      statsStmt.sql,
+      ...statsStmt.params,
     ),
     db.getFirstAsync<{ name: string }>(largestStmt.sql, ...largestStmt.params),
-    db.getFirstAsync<{ totalMinor: number; txCount: number; lastOccurredAt: string | null }>(
-      allTimeStmt.sql,
-      ...allTimeStmt.params,
-    ),
+    db.getFirstAsync<{
+      totalMinor: number;
+      txCount: number;
+      firstOccurredAt: string | null;
+      lastOccurredAt: string | null;
+    }>(extentStmt.sql, ...extentStmt.params),
   ]);
 
-  const txCount = period?.txCount ?? 0;
-  const totalMinor = period?.totalMinor ?? 0;
+  const txCount = stats?.txCount ?? 0;
+  const totalMinor = stats?.totalMinor ?? 0;
   return {
     totalMinor,
     txCount,
     averageMinor: txCount > 0 ? Math.round(totalMinor / txCount) : 0,
-    largestMinor: period?.largestMinor ?? 0,
+    largestMinor: stats?.largestMinor ?? 0,
     largestName: largest?.name ?? null,
-    allTimeTotalMinor: allTime?.totalMinor ?? 0,
-    allTimeCount: allTime?.txCount ?? 0,
-    lastOccurredAt: allTime?.lastOccurredAt ?? null,
+    allTimeTotalMinor: extent?.totalMinor ?? 0,
+    allTimeCount: extent?.txCount ?? 0,
+    firstOccurredAt: extent?.firstOccurredAt ?? null,
+    lastOccurredAt: extent?.lastOccurredAt ?? null,
   };
 }
 
@@ -282,9 +289,10 @@ export async function listSliceTransactionIds(
   dim: BreakdownDim,
   sliceId: string,
   kind: ReportKind,
+  scope: SliceScope,
 ): Promise<string[]> {
   const db = await getDb();
-  const { sql, params } = sliceTransactionIdsSql(filter, dim, sliceId, kind);
+  const { sql, params } = sliceTransactionIdsSql(filter, dim, sliceId, kind, scope);
   const rows = await db.getAllAsync<{ id: string }>(sql, ...params);
   return rows.map((r) => r.id);
 }

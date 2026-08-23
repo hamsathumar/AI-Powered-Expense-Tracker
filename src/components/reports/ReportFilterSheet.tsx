@@ -9,21 +9,25 @@
  *
  * Include vs exclude are mutually exclusive per category: picking a category
  * in one list removes it from the other, so the two can never contradict.
+ *
+ * Layout note — the scrim is a SIBLING behind the sheet, never an ancestor of
+ * the ScrollView. Wrapping the sheet in a Pressable makes it claim the touch
+ * responder, so drags that begin on empty space (the gap beside a wrapped chip
+ * row) never reach the ScrollView and the sheet appears to only scroll from
+ * on top of a control.
  */
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Feather } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
+import { DateRangePicker } from '@/components/reports/DateRangePicker';
 import type { Account, Category, CategoryKind, Person } from '@/domain/types';
 import {
   customPeriod,
-  fromDay,
   periodFor,
   rangeLabel,
-  toDay,
   RANGE_PRESETS,
   type Period,
   type RangePreset,
@@ -70,6 +74,11 @@ const KIND_FILTERS: { value: KindFilter; label: string }[] = [
   { value: 'income', label: 'Income' },
 ];
 
+const PRESET_OPTIONS: { value: RangePreset; label: string }[] = [
+  ...RANGE_PRESETS,
+  { value: 'custom', label: 'Custom' },
+];
+
 function toggle(list: string[], id: string): string[] {
   return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
 }
@@ -92,30 +101,20 @@ function FilterSheetBody({
   onClose,
   onApply,
 }: Omit<Props, 'visible'>) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   const [draft, setDraft] = useState<ReportFilterValue>(value);
   const [includeKind, setIncludeKind] = useState<KindFilter>('all');
   const [excludeKind, setExcludeKind] = useState<KindFilter>('all');
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   const setPreset = (preset: RangePreset) => {
     if (preset === 'custom') {
-      setDraft((d) => ({ ...d, period: customPeriod(d.period.range.startDay, d.period.range.endDay) }));
+      setCalendarOpen(true);
       return;
     }
     setDraft((d) => ({ ...d, period: periodFor(preset, d.period.anchor) }));
-  };
-
-  const setCustomDay = (edge: 'start' | 'end', date: Date) => {
-    setDraft((d) => {
-      const day = toDay(date);
-      const { startDay, endDay } = d.period.range;
-      return {
-        ...d,
-        period: edge === 'start' ? customPeriod(day, endDay) : customPeriod(startDay, day),
-      };
-    });
   };
 
   const toggleCategory = (list: 'includeCategoryIds' | 'excludeCategoryIds', id: string) => {
@@ -154,157 +153,159 @@ function FilterSheetBody({
     ...people.map((p) => ({ id: p.id, label: p.name, icon: 'user' as const })),
   ];
 
-  const isCustom = draft.period.preset === 'custom';
-
   return (
-    <Pressable style={styles.scrim} onPress={onClose}>
-        <Pressable
-          style={[styles.sheet, { backgroundColor: colors.bg, paddingBottom: insets.bottom }]}
-          onPress={() => {}}>
-          <View style={styles.grabberRow}>
-            <View style={[styles.grabber, { backgroundColor: colors.border }]} />
-          </View>
+    <View style={styles.root}>
+      {/* Sibling, not a wrapper — see the note at the top of the file. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Close filters"
+        onPress={onClose}
+        style={styles.scrim}
+      />
 
-          <View style={styles.titleRow}>
-            <Text style={[type.h1, { color: colors.text }]}>Filter</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} hitSlop={space.sm}>
-              <Feather name="x" size={22} color={colors.textMuted} />
-            </Pressable>
-          </View>
+      <View style={[styles.sheet, { backgroundColor: colors.bg, paddingBottom: insets.bottom }]}>
+        <View style={styles.grabberRow}>
+          <View style={[styles.grabber, { backgroundColor: colors.border }]} />
+        </View>
 
-          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-            {/* Period */}
-            <View style={styles.section}>
-              <Text style={[type.label, { color: colors.textMuted }]}>Period</Text>
-              <View style={styles.presetRow}>
-                {[...RANGE_PRESETS, { value: 'custom' as const, label: 'Custom' }].map((p) => {
-                  const selected = draft.period.preset === p.value;
-                  return (
-                    <Pressable
-                      key={p.value}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      onPress={() => setPreset(p.value)}
-                      style={[
-                        styles.preset,
-                        {
-                          backgroundColor: selected ? colors.primary : colors.surfaceAlt,
-                        },
-                      ]}>
-                      <Text style={[type.label, { color: selected ? colors.onPrimary : colors.text }]}>
-                        {p.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+        <View style={styles.titleRow}>
+          <Text style={[type.h1, { color: colors.text }]}>Filter</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            onPress={onClose}
+            hitSlop={space.sm}
+            style={styles.closeHit}>
+            <Feather name="x" size={22} color={colors.textMuted} />
+          </Pressable>
+        </View>
 
-              <View style={[styles.rangeCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <View style={styles.rangeHead}>
-                  <Feather name="calendar" size={16} color={colors.primary} />
-                  <Text style={[type.body, styles.rangeLabel, { color: colors.text }]}>
-                    {rangeLabel(draft.period)}
-                  </Text>
-                </View>
-                <View style={styles.rangeRow}>
-                  <Text style={[type.caption, { color: colors.textMuted }]}>From</Text>
-                  <DateTimePicker
-                    value={fromDay(draft.period.range.startDay)}
-                    mode="date"
-                    display="compact"
-                    accentColor={colors.primary}
-                    themeVariant={isDark ? 'dark' : 'light'}
-                    onChange={(_e, date) => date && setCustomDay('start', date)}
-                  />
-                  <Text style={[type.caption, { color: colors.textMuted }]}>To</Text>
-                  <DateTimePicker
-                    value={fromDay(draft.period.range.endDay)}
-                    mode="date"
-                    display="compact"
-                    accentColor={colors.primary}
-                    themeVariant={isDark ? 'dark' : 'light'}
-                    onChange={(_e, date) => date && setCustomDay('end', date)}
-                  />
-                </View>
-                {isCustom ? null : (
-                  <Text style={[type.caption, { color: colors.textSubtle }]}>
-                    Changing a date switches to a custom range.
-                  </Text>
-                )}
-              </View>
-            </View>
+        <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+          {/* Period */}
+          <View style={styles.section}>
+            <Text style={[type.label, { color: colors.textMuted }]}>Period</Text>
 
-            {/* Account */}
-            <View style={styles.section}>
-              <Text style={[type.label, { color: colors.textMuted }]}>Select account</Text>
-              <ChipSelector
-                items={accountChips}
-                selectedId={draft.accountId ?? ALL}
-                onSelect={(id) => setDraft((d) => ({ ...d, accountId: id === ALL ? null : id }))}
-              />
-            </View>
-
-            {/* Include categories */}
-            <View style={styles.section}>
-              <Text style={[type.label, { color: colors.textMuted }]}>Include categories</Text>
-              <KindPills value={includeKind} onChange={setIncludeKind} />
-              <ChipSelector
-                items={categoryChips(includeKind)}
-                selectedIds={draft.includeCategoryIds.length > 0 ? draft.includeCategoryIds : [ALL]}
-                onSelect={(id) => toggleCategory('includeCategoryIds', id)}
-              />
-            </View>
-
-            {/* Exclude categories */}
-            <View style={styles.section}>
-              <Text style={[type.label, { color: colors.textMuted }]}>Exclude categories</Text>
-              <KindPills value={excludeKind} onChange={setExcludeKind} />
-              <ChipSelector
-                items={categoryChips(excludeKind)}
-                selectedIds={draft.excludeCategoryIds.length > 0 ? draft.excludeCategoryIds : [ALL]}
-                onSelect={(id) => toggleCategory('excludeCategoryIds', id)}
-              />
-            </View>
-
-            {/* Person */}
-            <View style={styles.section}>
-              <Text style={[type.label, { color: colors.textMuted }]}>Select a person</Text>
-              <Text style={[type.caption, { color: colors.textSubtle }]}>
-                Spending and income tagged with someone — lending balances live on the People screen.
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Date range: ${rangeLabel(draft.period)}. Opens a calendar.`}
+              onPress={() => setCalendarOpen(true)}
+              style={({ pressed }) => [
+                styles.rangeButton,
+                { backgroundColor: colors.surfaceAlt },
+                pressed && styles.pressed,
+              ]}>
+              <Feather name="calendar" size={18} color={colors.primary} />
+              <Text numberOfLines={1} style={[type.body, styles.rangeLabel, { color: colors.text }]}>
+                {rangeLabel(draft.period)}
               </Text>
-              <ChipSelector
-                items={personChips}
-                selectedId={draft.personId ?? ALL}
-                onSelect={(id) => setDraft((d) => ({ ...d, personId: id === ALL ? null : id }))}
-                emptyHint="No people yet."
-              />
-            </View>
-          </ScrollView>
+              <Feather name="chevron-right" size={18} color={colors.textSubtle} />
+            </Pressable>
 
-          <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.bg }]}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                setDraft((d) => ({
-                  period: d.period,
-                  accountId: null,
-                  personId: null,
-                  includeCategoryIds: [],
-                  excludeCategoryIds: [],
-                }))
-              }
-              style={styles.clear}>
-              <Text style={[type.label, { color: colors.primary }]}>Clear filters</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => onApply(draft)}
-              style={[styles.done, { backgroundColor: colors.primary }]}>
-              <Text style={[type.label, { color: colors.onPrimary }]}>Done</Text>
-            </Pressable>
+            <View style={styles.presetRow}>
+              {PRESET_OPTIONS.map((preset) => {
+                const selected = draft.period.preset === preset.value;
+                return (
+                  <Pressable
+                    key={preset.value}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setPreset(preset.value)}
+                    style={[
+                      styles.preset,
+                      { backgroundColor: selected ? colors.primary : colors.surfaceAlt },
+                    ]}>
+                    <Text style={[type.label, { color: selected ? colors.onPrimary : colors.text }]}>
+                      {preset.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-      </Pressable>
-    </Pressable>
+
+          {/* Account */}
+          <View style={styles.section}>
+            <Text style={[type.label, { color: colors.textMuted }]}>Select account</Text>
+            <ChipSelector
+              items={accountChips}
+              selectedId={draft.accountId ?? ALL}
+              onSelect={(id) => setDraft((d) => ({ ...d, accountId: id === ALL ? null : id }))}
+            />
+          </View>
+
+          {/* Include categories */}
+          <View style={styles.section}>
+            <Text style={[type.label, { color: colors.textMuted }]}>Include categories</Text>
+            <KindPills value={includeKind} onChange={setIncludeKind} />
+            <ChipSelector
+              items={categoryChips(includeKind)}
+              selectedIds={draft.includeCategoryIds.length > 0 ? draft.includeCategoryIds : [ALL]}
+              onSelect={(id) => toggleCategory('includeCategoryIds', id)}
+            />
+          </View>
+
+          {/* Exclude categories */}
+          <View style={styles.section}>
+            <Text style={[type.label, { color: colors.textMuted }]}>Exclude categories</Text>
+            <KindPills value={excludeKind} onChange={setExcludeKind} />
+            <ChipSelector
+              items={categoryChips(excludeKind)}
+              selectedIds={draft.excludeCategoryIds.length > 0 ? draft.excludeCategoryIds : [ALL]}
+              onSelect={(id) => toggleCategory('excludeCategoryIds', id)}
+            />
+          </View>
+
+          {/* Person */}
+          <View style={styles.section}>
+            <Text style={[type.label, { color: colors.textMuted }]}>Select a person</Text>
+            <Text style={[type.caption, { color: colors.textSubtle }]}>
+              Spending and income tagged with someone — lending balances live on the People screen.
+            </Text>
+            <ChipSelector
+              items={personChips}
+              selectedId={draft.personId ?? ALL}
+              onSelect={(id) => setDraft((d) => ({ ...d, personId: id === ALL ? null : id }))}
+              emptyHint="No people yet."
+            />
+          </View>
+        </ScrollView>
+
+        <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.bg }]}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              setDraft((d) => ({
+                period: d.period,
+                accountId: null,
+                personId: null,
+                includeCategoryIds: [],
+                excludeCategoryIds: [],
+              }))
+            }
+            style={styles.clear}>
+            <Text style={[type.label, { color: colors.primary }]}>Clear filters</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => onApply(draft)}
+            style={[styles.done, { backgroundColor: colors.primary }]}>
+            <Text style={[type.label, { color: colors.onPrimary }]}>Done</Text>
+          </Pressable>
+        </View>
+
+        {calendarOpen ? (
+          <DateRangePicker
+            startDay={draft.period.range.startDay}
+            endDay={draft.period.range.endDay}
+            onCancel={() => setCalendarOpen(false)}
+            onApply={(startDay, endDay) => {
+              setDraft((d) => ({ ...d, period: customPeriod(startDay, endDay) }));
+              setCalendarOpen(false);
+            }}
+          />
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -322,7 +323,10 @@ function KindPills({ value, onChange }: { value: KindFilter; onChange: (v: KindF
             onPress={() => onChange(k.value)}
             style={[
               styles.kindPill,
-              { backgroundColor: selected ? colors.primarySoft : 'transparent', borderColor: selected ? colors.primary : colors.border },
+              {
+                backgroundColor: selected ? colors.primarySoft : 'transparent',
+                borderColor: selected ? colors.primary : colors.border,
+              },
             ]}>
             <Text style={[type.caption, { color: selected ? colors.primary : colors.textMuted }]}>
               {k.label}
@@ -335,12 +339,21 @@ function KindPills({ value, onChange }: { value: KindFilter; onChange: (v: KindF
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, justifyContent: 'flex-end' },
   // Conventional modal scrim (chrome, not a themeable design colour).
-  scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  scrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
   sheet: {
     maxHeight: '90%',
     borderTopLeftRadius: layout.sheetRadius,
     borderTopRightRadius: layout.sheetRadius,
+    overflow: 'hidden',
   },
   grabberRow: { alignItems: 'center', paddingTop: space.sm },
   grabber: { width: 36, height: 4, borderRadius: radius.pill },
@@ -351,8 +364,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: screenPaddingH,
     paddingTop: space.sm,
   },
+  closeHit: {
+    minWidth: minTouchTarget,
+    minHeight: minTouchTarget,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   body: { padding: screenPaddingH, gap: space.xl, paddingBottom: space.xl },
   section: { gap: space.sm },
+  rangeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: minTouchTarget + space.sm,
+    paddingHorizontal: space.lg,
+    borderRadius: radius.pill,
+  },
+  rangeLabel: { flex: 1 },
+  pressed: { opacity: 0.7 },
   presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   preset: {
     paddingVertical: layout.chipPaddingV,
@@ -361,15 +390,6 @@ const styles = StyleSheet.create({
     minHeight: Math.max(36, minTouchTarget - space.sm),
     justifyContent: 'center',
   },
-  rangeCard: {
-    borderRadius: layout.cardRadius,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: space.md,
-    gap: space.sm,
-  },
-  rangeHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  rangeLabel: { flex: 1 },
-  rangeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
   kindRow: { flexDirection: 'row', gap: space.sm },
   kindPill: {
     paddingVertical: space.xs + 2,

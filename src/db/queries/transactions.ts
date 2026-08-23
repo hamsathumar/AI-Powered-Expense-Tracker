@@ -1,6 +1,10 @@
 import * as Crypto from 'expo-crypto';
 
 import { getDb } from '@/db/client';
+import {
+  transactionFilterWhere,
+  type TransactionFilter,
+} from '@/db/queries/transactionFilterSql';
 import type {
   ConfidenceFlag,
   LendingDirection,
@@ -233,39 +237,25 @@ export async function getTransactionItem(id: string): Promise<TransactionListIte
   return row ? toListItem(row) : null;
 }
 
-export interface TransactionListFilter {
-  /** Only transactions touching this account — including transfers where it
-   *  is the source OR destination (a transfer moves real money through it). */
-  accountId?: string;
-  /** Case-insensitive substring match on name or description. */
-  search?: string;
-  limit?: number;
-}
-
+/**
+ * Ledger listing for the Accounts tab. The WHERE clause is built by the pure
+ * `transactionFilterSql` module so every combination is covered by tests
+ * against a real SQLite engine.
+ *
+ * `limit` is optional: the CSV export needs every matching row, not a page.
+ */
 export async function listTransactionItems(
-  filter: TransactionListFilter = {},
+  filter: TransactionFilter & { limit?: number } = {},
 ): Promise<TransactionListItem[]> {
   const db = await getDb();
-  const where: string[] = ["t.status != 'rejected'"];
-  const params: (string | number)[] = [];
-
-  if (filter.accountId) {
-    where.push('(t.account_id = ? OR t.to_account_id = ?)');
-    params.push(filter.accountId, filter.accountId);
-  }
-  if (filter.search?.trim()) {
-    where.push('(t.name LIKE ? OR t.description LIKE ?)');
-    const like = `%${filter.search.trim()}%`;
-    params.push(like, like);
-  }
-  params.push(filter.limit ?? 200);
-
+  const { sql, params } = transactionFilterWhere(filter);
+  const limitClause = filter.limit == null ? '' : ' LIMIT ?';
   const rows = await db.getAllAsync<JoinedRow>(
     `${JOINED_SELECT}
-     WHERE ${where.join(' AND ')}
-     ORDER BY t.occurred_at DESC
-     LIMIT ?`,
+     WHERE ${sql}
+     ORDER BY t.occurred_at DESC${limitClause}`,
     ...params,
+    ...(filter.limit == null ? [] : [filter.limit]),
   );
   return rows.map(toListItem);
 }
@@ -292,6 +282,8 @@ export async function listTransactionItemsByIds(ids: string[]): Promise<Transact
   // Preserve the caller's ordering.
   return ids.map((id) => byId.get(id)).filter((item): item is TransactionListItem => item != null);
 }
+
+export type { TransactionFilter } from '@/db/queries/transactionFilterSql';
 
 export async function listRecentTransactionItems(limit = 50): Promise<TransactionListItem[]> {
   const db = await getDb();

@@ -1,28 +1,70 @@
 /**
  * Accounts tab (spec §8.7): account cards with computed balances (approved
- * only — §4.2), then a searchable transaction list below.
+ * only — §4.2), then the transaction ledger below.
  *
- * Interaction: tapping a card SELECTS it, filtering the transaction list to
- * that account (including transfers that touch it — real money moves through
- * it). A trailing pencil edits the account. + Add is a floating button.
+ * The ledger controls float over the list rather than scrolling away with it:
+ * a search pill + filter button at the bottom, with "add account" stacked
+ * above them. Search and the filter sheet feed one `TransactionFilter`, which
+ * also drives the CSV export in the header — so what you export is exactly
+ * what you are looking at.
+ *
+ * Tapping an account card sets that filter's account (and tapping it again
+ * clears it), so the cards and the sheet are two ways to set one piece of
+ * state rather than two competing filters.
+ *
+ * Unlike Reports, this list is the ledger: all four transaction types, and
+ * pending rows included — only rejected ones are hidden.
  */
 import { Feather } from '@expo/vector-icons';
 import { format, isToday, isYesterday } from 'date-fns';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SectionList,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountCard } from '@/components/AccountCard';
 import { Fab } from '@/components/Fab';
+import { TransactionFilterSheet } from '@/components/TransactionFilterSheet';
 import { TransactionRow } from '@/components/TransactionRow';
 import { listAccountBalancesMinor, listAccounts } from '@/db/queries/accounts';
+import { listCategories } from '@/db/queries/categories';
+import { listPeople } from '@/db/queries/people';
+import {
+  hasActiveTransactionFilter,
+  type TransactionFilter,
+} from '@/db/queries/transactionFilterSql';
 import { listTransactionItems, type TransactionListItem } from '@/db/queries/transactions';
 import { accountDeltaMinor } from '@/domain/accountActivity';
 import { formatAmount } from '@/domain/money';
-import type { Account } from '@/domain/types';
+import type { Account, Category, Person } from '@/domain/types';
+import { shareTransactionsCsv } from '@/services/transactionCsv';
 import { useTheme } from '@/theme/ThemeContext';
-import { fontFamily, minTouchTarget, radius, screenPaddingH, space, tabularNums, type } from '@/theme/tokens';
+import {
+  bottomClearance,
+  fontFamily,
+  layout,
+  minTouchTarget,
+  radius,
+  screenPaddingH,
+  shadow,
+  space,
+  tabularNums,
+  type,
+} from '@/theme/tokens';
+
+/** The ledger is paged for rendering; the CSV export deliberately is not. */
+const LIST_LIMIT = 500;
 
 function dayTitle(iso: string): string {
   const date = new Date(iso);
@@ -32,39 +74,80 @@ function dayTitle(iso: string): string {
 }
 
 export default function AccountsScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const router = useRouter();
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [balances, setBalances] = useState<Map<string, number>>(new Map());
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [transactions, setTransactions] = useState<TransactionListItem[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
 
-  const loadAccounts = useCallback(() => {
-    Promise.all([listAccounts(), listAccountBalancesMinor()])
-      .then(([acc, bal]) => {
+  const [filter, setFilter] = useState<TransactionFilter>({});
+  const [search, setSearch] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // One definition of "what is being listed", shared by the list and the export.
+  const activeFilter: TransactionFilter = useMemo(() => ({ ...filter, search }), [filter, search]);
+  const filterKey = JSON.stringify(activeFilter);
+
+  const loadReference = useCallback(() => {
+    Promise.all([
+      listAccounts(),
+      listAccountBalancesMinor(),
+      listCategories('expense'),
+      listCategories('income'),
+      listPeople(),
+    ])
+      .then(([acc, bal, expenseCats, incomeCats, ppl]) => {
         setAccounts(acc);
         setBalances(bal);
+        setCategories([...expenseCats, ...incomeCats]);
+        setPeople(ppl);
       })
       .catch((e) => Alert.alert('Database error', String(e)));
   }, []);
 
   const loadTransactions = useCallback(() => {
-    listTransactionItems({ accountId: selectedId ?? undefined, search })
+    listTransactionItems({ ...(JSON.parse(filterKey) as TransactionFilter), limit: LIST_LIMIT })
       .then(setTransactions)
       .catch((e) => Alert.alert('Database error', String(e)));
-  }, [selectedId, search]);
+  }, [filterKey]);
 
   // Accounts/balances refresh on focus; the list also re-runs on filter change.
   useFocusEffect(
     useCallback(() => {
-      loadAccounts();
+      loadReference();
       loadTransactions();
-    }, [loadAccounts, loadTransactions]),
+    }, [loadReference, loadTransactions]),
   );
   useEffect(loadTransactions, [loadTransactions]);
 
-  const selectedAccount = accounts.find((a) => a.id === selectedId) ?? null;
+  const selectedAccount = accounts.find((a) => a.id === filter.accountId) ?? null;
+  const filtersActive = hasActiveTransactionFilter(filter);
+
+  const setAccountFilter = (accountId: string | null) =>
+    setFilter((f) => ({ ...f, accountId: f.accountId === accountId ? null : accountId }));
+
+  /**
+   * Export exactly what the ledger is showing — no filter means everything.
+   * Runs its own unlimited query so a long history isn't truncated to the
+   * page the list renders.
+   */
+  const onExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const rows = await listTransactionItems(activeFilter);
+      // The iOS share sheet is its own confirmation — no success alert needed.
+      await shareTransactionsCsv(rows, filter.accountId ?? undefined);
+    } catch (e) {
+      Alert.alert('Export failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Group the transaction list by local day, with each day's net cash effect
   // (v2 §6). Transactions arrive newest-first, so days stay in that order.
@@ -77,14 +160,39 @@ export default function AccountsScreen() {
     return [...byDay.entries()].map(([key, data]) => ({
       key,
       title: dayTitle(data[0]!.tx.occurredAt),
-      netMinor: data.reduce((sum, i) => sum + accountDeltaMinor(i.tx, selectedId ?? undefined), 0),
+      netMinor: data.reduce(
+        (sum, i) => sum + accountDeltaMinor(i.tx, filter.accountId ?? undefined),
+        0,
+      ),
       data,
     }));
-  }, [transactions, selectedId]);
+  }, [transactions, filter.accountId]);
 
   const header = (
     <View style={styles.headerBlock}>
-      <Text style={[type.h1, { color: colors.text }]}>Accounts</Text>
+      <View style={styles.titleRow}>
+        <Text style={[type.h1, styles.title, { color: colors.text }]}>Accounts</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            filtersActive || search
+              ? 'Export the filtered transactions as CSV'
+              : 'Export all transactions as CSV'
+          }
+          accessibilityState={{ busy: exporting }}
+          onPress={onExport}
+          style={({ pressed }) => [
+            styles.headerButton,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            pressed && styles.pressed,
+          ]}>
+          {exporting ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Feather name="share" size={18} color={colors.primary} />
+          )}
+        </Pressable>
+      </View>
 
       {accounts.length === 0 ? (
         <View style={styles.empty}>
@@ -100,8 +208,8 @@ export default function AccountsScreen() {
               key={item.id}
               account={item}
               balanceMinor={balances.get(item.id) ?? item.openingBalanceMinor}
-              selected={item.id === selectedId}
-              onPress={() => setSelectedId((prev) => (prev === item.id ? null : item.id))}
+              selected={item.id === filter.accountId}
+              onPress={() => setAccountFilter(item.id)}
               onEdit={() => router.push({ pathname: '/account/[id]', params: { id: item.id } })}
             />
           ))}
@@ -113,27 +221,11 @@ export default function AccountsScreen() {
         {selectedAccount ? (
           <Pressable
             accessibilityRole="button"
-            onPress={() => setSelectedId(null)}
-            style={[styles.filterChip, { backgroundColor: colors.primarySoft }]}>
+            accessibilityLabel={`Clear the ${selectedAccount.name} filter`}
+            onPress={() => setAccountFilter(null)}
+            style={[styles.chip, { backgroundColor: colors.primarySoft }]}>
             <Text style={[type.caption, { color: colors.primary }]}>{selectedAccount.name}</Text>
             <Feather name="x" size={12} color={colors.primary} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      <View style={[styles.searchBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Feather name="search" size={16} color={colors.textSubtle} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search transactions"
-          placeholderTextColor={colors.textSubtle}
-          autoCapitalize="none"
-          style={[styles.searchInput, { color: colors.text }]}
-        />
-        {search.length > 0 ? (
-          <Pressable accessibilityRole="button" onPress={() => setSearch('')} hitSlop={space.sm}>
-            <Feather name="x" size={16} color={colors.textSubtle} />
           </Pressable>
         ) : null}
       </View>
@@ -141,12 +233,19 @@ export default function AccountsScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+    <SafeAreaView
+      // No 'bottom': inside the tab navigator the tab bar already owns the
+      // home-indicator inset. Applying it here too clips the scroll content
+      // and leaves a dead strip above the tab bar.
+      edges={['top', 'left', 'right']}
+      style={[styles.safeArea, { backgroundColor: colors.bg }]}>
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.tx.id}
         contentContainerStyle={styles.list}
         stickySectionHeadersEnabled={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         ListHeaderComponent={header}
         renderSectionHeader={({ section }) => (
           <View style={styles.dayHeader}>
@@ -169,17 +268,90 @@ export default function AccountsScreen() {
         ListEmptyComponent={
           accounts.length > 0 ? (
             <Text style={[type.caption, styles.emptyText, { color: colors.textSubtle }]}>
-              {search || selectedAccount ? 'No matching transactions.' : 'No transactions yet.'}
+              {search || filtersActive ? 'No matching transactions.' : 'No transactions yet.'}
             </Text>
           ) : null
         }
       />
 
-      <Fab
-        icon="plus"
-        accessibilityLabel="Add account"
-        onPress={() => router.push('/account/new')}
-        style={styles.fab}
+      {/* Floating ledger controls. KeyboardAvoidingView measures its own frame,
+          so it lifts the bar by exactly the keyboard's overlap — which also
+          accounts for the tab bar sitting below this screen. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        pointerEvents="box-none"
+        style={styles.floatingLayer}>
+        <View pointerEvents="box-none" style={styles.floatingStack}>
+          <Fab
+            icon="plus"
+            accessibilityLabel="Add account"
+            size={layout.accounts.buttonSize}
+            onPress={() => router.push('/account/new')}
+          />
+
+          <View pointerEvents="box-none" style={styles.barRow}>
+            <View
+              style={[
+                styles.searchBox,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                !isDark && shadow,
+              ]}>
+              <Feather name="search" size={18} color={colors.textSubtle} />
+              <TextInput
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Search transactions"
+                placeholderTextColor={colors.textSubtle}
+                autoCapitalize="none"
+                returnKeyType="search"
+                style={[styles.searchInput, { color: colors.text }]}
+              />
+              {search.length > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search"
+                  onPress={() => setSearch('')}
+                  hitSlop={space.sm}>
+                  <Feather name="x" size={18} color={colors.textSubtle} />
+                </Pressable>
+              ) : null}
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Filter transactions"
+              onPress={() => setFilterOpen(true)}
+              style={({ pressed }) => [
+                styles.filterButton,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                !isDark && shadow,
+                pressed && styles.pressed,
+              ]}>
+              <Feather name="filter" size={20} color={colors.primary} />
+              {filtersActive ? (
+                <View
+                  style={[
+                    styles.filterDot,
+                    { backgroundColor: colors.warning, borderColor: colors.surface },
+                  ]}
+                />
+              ) : null}
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+
+      <TransactionFilterSheet
+        visible={filterOpen}
+        value={filter}
+        accounts={accounts}
+        categories={categories}
+        people={people}
+        onClose={() => setFilterOpen(false)}
+        onApply={(next) => {
+          setFilter(next);
+          setFilterOpen(false);
+        }}
       />
     </SafeAreaView>
   );
@@ -189,13 +361,29 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   list: {
     paddingHorizontal: screenPaddingH,
-    paddingBottom: space.xxl * 3,
+    paddingBottom: bottomClearance.accounts,
     gap: space.sm,
   },
   headerBlock: {
     gap: space.md,
     paddingTop: space.md,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+  },
+  title: { flex: 1 },
+  headerButton: {
+    width: minTouchTarget,
+    height: minTouchTarget,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressed: { opacity: 0.7 },
   cards: { gap: space.sm },
   dayHeader: {
     flexDirection: 'row',
@@ -211,7 +399,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
     marginTop: space.sm,
   },
-  filterChip: {
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
@@ -219,36 +407,69 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
   },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    minHeight: minTouchTarget,
-  },
-  // iOS reliably centres a single-line TextInput only when it has an explicit
-  // height and no vertical padding — with padding-based sizing the glyphs sit
-  // toward the top of the line box and read as un-centred against the search
-  // icon. Fill the row's touch-target height and let iOS centre the line.
-  searchInput: {
-    flex: 1,
-    height: minTouchTarget,
-    paddingVertical: 0,
-    fontFamily: fontFamily.body,
-    fontSize: 15,
-    includeFontPadding: false,
-  },
   empty: {
     alignItems: 'center',
     gap: space.md,
     paddingVertical: space.xl,
   },
   emptyText: { textAlign: 'center', paddingTop: space.lg },
-  fab: {
+
+  floatingLayer: {
     position: 'absolute',
-    right: screenPaddingH,
-    bottom: space.xl,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  floatingStack: {
+    paddingHorizontal: screenPaddingH,
+    paddingBottom: layout.accounts.floatingBottom,
+    gap: layout.accounts.stackGap,
+    // The add button sits above the filter button, hard right.
+    alignItems: 'flex-end',
+  },
+  barRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    gap: space.sm,
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    height: layout.accounts.barHeight,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.lg,
+  },
+  // iOS reliably centres a single-line TextInput only when it has an explicit
+  // height and no vertical padding — with padding-based sizing the glyphs sit
+  // toward the top of the line box and read as un-centred against the search
+  // icon. Fill the row's height and let iOS centre the line.
+  searchInput: {
+    flex: 1,
+    height: layout.accounts.barHeight,
+    paddingVertical: 0,
+    fontFamily: fontFamily.body,
+    fontSize: 15,
+    includeFontPadding: false,
+  },
+  filterButton: {
+    width: layout.accounts.buttonSize,
+    height: layout.accounts.buttonSize,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
   },
 });

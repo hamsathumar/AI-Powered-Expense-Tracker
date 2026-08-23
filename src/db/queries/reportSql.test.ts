@@ -25,8 +25,8 @@ import {
   dailyTotalsSql,
   largestTransactionSql,
   rangeSummarySql,
-  sliceAllTimeStatsSql,
-  slicePeriodStatsSql,
+  sliceExtentSql,
+  sliceStatsSql,
   sliceTransactionIdsSql,
   type BreakdownDim,
   type ReportFilter,
@@ -137,8 +137,11 @@ describe('every statement prepares', () => {
     };
     for (const dim of ALL_DIMS) {
       expect(() => run(breakdownSql(filter, dim, 'expense'))).not.toThrow();
-      expect(() => run(slicePeriodStatsSql(filter, dim, 'c1', 'expense'))).not.toThrow();
-      expect(() => run(sliceTransactionIdsSql(filter, dim, 'c1', 'expense'))).not.toThrow();
+      for (const scope of ['period', 'allTime'] as const) {
+        expect(() => run(sliceStatsSql(filter, dim, 'c1', 'expense', scope))).not.toThrow();
+        expect(() => run(sliceTransactionIdsSql(filter, dim, 'c1', 'expense', scope))).not.toThrow();
+      }
+      expect(() => run(sliceExtentSql(dim, 'c1', 'expense'))).not.toThrow();
     }
     expect(() => run(rangeSummarySql(filter))).not.toThrow();
     expect(() => run(dailyTotalsSql(filter))).not.toThrow();
@@ -255,38 +258,85 @@ describe('daily totals', () => {
 describe('slice stats', () => {
   it('reports total, count and largest for the period', () => {
     const [row] = run<{ totalMinor: number; txCount: number; largestMinor: number }>(
-      slicePeriodStatsSql(AUGUST, 'category', 'c1', 'expense'),
+      sliceStatsSql(AUGUST, 'category', 'c1', 'expense', 'period'),
     );
     expect(row).toEqual({ totalMinor: 100_000, txCount: 3, largestMinor: 50_000 });
   });
 
-  it('all-time ignores the period and the rest of the filter', () => {
-    const [row] = run<{ totalMinor: number; txCount: number; lastOccurredAt: string }>(
-      sliceAllTimeStatsSql('category', 'c1', 'expense'),
+  it('the allTime scope ignores the period', () => {
+    const [row] = run<{ totalMinor: number; txCount: number }>(
+      sliceStatsSql(AUGUST, 'category', 'c1', 'expense', 'allTime'),
     );
-    // Includes July's 40000, which the period query excluded.
+    // Picks up July's 40000, which the period scope excluded.
     expect(row.totalMinor).toBe(140_000);
     expect(row.txCount).toBe(4);
   });
 
+  it('the allTime scope also ignores the rest of the filter', () => {
+    // Narrowing to account a2 would drop two of the four Food rows if the
+    // filter still applied — the Overall tab must show the true lifetime cost.
+    const narrowed: ReportFilter = { ...AUGUST, accountId: 'a2' };
+    const [row] = run<{ totalMinor: number }>(
+      sliceStatsSql(narrowed, 'category', 'c1', 'expense', 'allTime'),
+    );
+    expect(row.totalMinor).toBe(140_000);
+  });
+
+  it('the period scope does honour the rest of the filter', () => {
+    const narrowed: ReportFilter = { ...AUGUST, accountId: 'a1' };
+    const [row] = run<{ totalMinor: number }>(
+      sliceStatsSql(narrowed, 'category', 'c1', 'expense', 'period'),
+    );
+    expect(row.totalMinor).toBe(80_000);
+  });
+
   it('separates the two recurring slices', () => {
     const [recurring] = run<{ totalMinor: number }>(
-      slicePeriodStatsSql(AUGUST, 'recurring', 'recurring', 'expense'),
+      sliceStatsSql(AUGUST, 'recurring', 'recurring', 'expense', 'period'),
     );
     const [oneOff] = run<{ totalMinor: number }>(
-      slicePeriodStatsSql(AUGUST, 'recurring', 'one_off', 'expense'),
+      sliceStatsSql(AUGUST, 'recurring', 'one_off', 'expense', 'period'),
     );
     expect(recurring.totalMinor).toBe(20_000);
     expect(oneOff.totalMinor).toBe(92_000);
   });
+
+  it('extent spans the whole history with both ends', () => {
+    const [row] = run<{
+      totalMinor: number;
+      txCount: number;
+      firstOccurredAt: string;
+      lastOccurredAt: string;
+    }>(sliceExtentSql('category', 'c1', 'expense'));
+    expect(row.totalMinor).toBe(140_000);
+    expect(row.txCount).toBe(4);
+    expect(row.firstOccurredAt).toBe('2026-07-15T04:00:00Z');
+    expect(row.lastOccurredAt).toBe('2026-08-09T04:00:00Z');
+  });
 });
 
 describe('slice transaction ids', () => {
-  it('lists the slice newest first', () => {
+  it('lists the period slice newest first', () => {
     const rows = run<{ id: string }>(
-      sliceTransactionIdsSql(AUGUST, 'category', 'c1', 'expense'),
+      sliceTransactionIdsSql(AUGUST, 'category', 'c1', 'expense', 'period'),
     );
     expect(rows.map((r) => r.id)).toEqual(['t4', 't2', 't1']);
+  });
+
+  it('the allTime scope reaches outside the period', () => {
+    const rows = run<{ id: string }>(
+      sliceTransactionIdsSql(AUGUST, 'category', 'c1', 'expense', 'allTime'),
+    );
+    // t9 is July's Food row.
+    expect(rows.map((r) => r.id)).toEqual(['t4', 't2', 't1', 't9']);
+  });
+
+  it('the allTime scope still obeys the golden rule', () => {
+    const rows = run<{ id: string }>(
+      sliceTransactionIdsSql(AUGUST, 'account', 'a1', 'expense', 'allTime'),
+    );
+    // Never the pending t6, the transfer t7, or the lending t8 — all on a1.
+    expect(rows.map((r) => r.id).sort()).toEqual(['t1', 't2', 't9']);
   });
 });
 

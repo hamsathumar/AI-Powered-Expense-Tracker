@@ -229,7 +229,12 @@ export default function ReportsScreen() {
   const hasAnything = summary.txCount > 0;
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+    <SafeAreaView
+      // No 'bottom': inside the tab navigator the tab bar already owns the
+      // home-indicator inset. Applying it here too clips the scroll content
+      // and leaves a dead strip above the tab bar.
+      edges={['top', 'left', 'right']}
+      style={[styles.safeArea, { backgroundColor: colors.bg }]}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={[type.h1, { color: colors.text }]}>Reports</Text>
 

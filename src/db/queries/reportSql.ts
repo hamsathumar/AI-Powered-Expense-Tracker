@@ -204,22 +204,56 @@ export function sliceWhere(dim: BreakdownDim, sliceId: string): Statement {
   }
 }
 
-export function slicePeriodStatsSql(
+/** Which span a drill-down is looking at. */
+export type SliceScope = 'period' | 'allTime';
+
+/**
+ * WHERE for one slice, in one scope.
+ *
+ * 'period' honours the active period AND the rest of the report filter.
+ * 'allTime' deliberately ignores both — it answers "what does this cost me
+ * overall?", which is the whole point of the Overall tab. The golden rule
+ * still applies in both.
+ */
+function sliceScopeWhere(
   filter: ReportFilter,
   dim: BreakdownDim,
   sliceId: string,
   kind: ReportKind,
+  scope: SliceScope,
 ): Statement {
   const slice = sliceWhere(dim, sliceId);
+  if (scope === 'allTime') {
+    return {
+      sql: `t.status = 'approved'
+       AND t.type = ?                              -- golden rule
+       AND ${slice.sql}`,
+      params: [kind, ...slice.params],
+    };
+  }
   const { sql, params } = filterWhere(filter, [kind]);
+  return {
+    sql: `${sql}
+       AND ${slice.sql}`,
+    params: [...params, ...slice.params],
+  };
+}
+
+export function sliceStatsSql(
+  filter: ReportFilter,
+  dim: BreakdownDim,
+  sliceId: string,
+  kind: ReportKind,
+  scope: SliceScope,
+): Statement {
+  const { sql, params } = sliceScopeWhere(filter, dim, sliceId, kind, scope);
   return {
     sql: `SELECT COALESCE(SUM(t.amount), 0) AS totalMinor,
             COUNT(*)                   AS txCount,
             COALESCE(MAX(t.amount), 0) AS largestMinor
      FROM transactions t
-     WHERE ${sql}
-       AND ${slice.sql}`,
-    params: [...params, ...slice.params],
+     WHERE ${sql}`,
+    params,
   };
 }
 
@@ -228,25 +262,24 @@ export function sliceLargestNameSql(
   dim: BreakdownDim,
   sliceId: string,
   kind: ReportKind,
+  scope: SliceScope,
 ): Statement {
-  const slice = sliceWhere(dim, sliceId);
-  const { sql, params } = filterWhere(filter, [kind]);
+  const { sql, params } = sliceScopeWhere(filter, dim, sliceId, kind, scope);
   return {
     sql: `SELECT t.name
      FROM transactions t
      WHERE ${sql}
-       AND ${slice.sql}
      ORDER BY t.amount DESC
      LIMIT 1`,
-    params: [...params, ...slice.params],
+    params,
   };
 }
 
 /**
- * Lifetime figures for a slice. Deliberately ignores the period AND the rest
- * of the filter, so the drill-down can answer "what does this cost me overall?"
+ * Lifetime figures for a slice, always across all history regardless of the
+ * active scope — the drill-down shows these as context next to the period.
  */
-export function sliceAllTimeStatsSql(
+export function sliceExtentSql(
   dim: BreakdownDim,
   sliceId: string,
   kind: ReportKind,
@@ -255,6 +288,7 @@ export function sliceAllTimeStatsSql(
   return {
     sql: `SELECT COALESCE(SUM(t.amount), 0) AS totalMinor,
             COUNT(*)                   AS txCount,
+            MIN(t.occurred_at)         AS firstOccurredAt,
             MAX(t.occurred_at)         AS lastOccurredAt
      FROM transactions t
      WHERE t.status = 'approved'
@@ -270,15 +304,14 @@ export function sliceTransactionIdsSql(
   dim: BreakdownDim,
   sliceId: string,
   kind: ReportKind,
+  scope: SliceScope,
 ): Statement {
-  const slice = sliceWhere(dim, sliceId);
-  const { sql, params } = filterWhere(filter, [kind]);
+  const { sql, params } = sliceScopeWhere(filter, dim, sliceId, kind, scope);
   return {
     sql: `SELECT t.id
      FROM transactions t
      WHERE ${sql}
-       AND ${slice.sql}
      ORDER BY t.occurred_at DESC`,
-    params: [...params, ...slice.params],
+    params,
   };
 }

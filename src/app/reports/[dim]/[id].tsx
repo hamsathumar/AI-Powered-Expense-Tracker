@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Amount } from '@/components/Amount';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { SegmentedControl } from '@/components/SegmentedControl';
 import { TransactionRow } from '@/components/TransactionRow';
 import {
   getBreakdown,
@@ -31,6 +32,7 @@ import {
   type BreakdownDim,
   type ReportFilter,
   type ReportKind,
+  type SliceScope,
   type SliceStats,
 } from '@/db/queries/reports';
 import { listTransactionItemsByIds, type TransactionListItem } from '@/db/queries/transactions';
@@ -84,6 +86,7 @@ export default function ReportSliceScreen() {
   const dim = params.dim;
   const kind = params.kind ?? 'expense';
 
+  const [scope, setScope] = useState<SliceScope>('period');
   const [stats, setStats] = useState<SliceStats | null>(null);
   const [sections, setSections] = useState<DaySection[]>([]);
   const [slice, setSlice] = useState<{ name: string; icon: string | null; color: string } | null>(null);
@@ -100,8 +103,8 @@ export default function ReportSliceScreen() {
   const reload = useCallback(() => {
     const filter: ReportFilter = JSON.parse(filterKey);
     Promise.all([
-      getSliceStats(filter, dim, params.id, kind),
-      listSliceTransactionIds(filter, dim, params.id, kind).then(listTransactionItemsByIds),
+      getSliceStats(filter, dim, params.id, kind, scope),
+      listSliceTransactionIds(filter, dim, params.id, kind, scope).then(listTransactionItemsByIds),
       getBreakdown(filter, dim, kind),
     ])
       .then(([sliceStats, items, breakdown]) => {
@@ -130,12 +133,14 @@ export default function ReportSliceScreen() {
         setSections([...byDay.values()]);
       })
       .catch((e) => Alert.alert('Database error', String(e)));
-  }, [filterKey, dim, kind, params.id]);
+  }, [filterKey, dim, kind, params.id, scope]);
 
   useFocusEffect(reload);
 
   const tint = slice?.color ?? colors[kind];
   const kindLabel = kind === 'expense' ? 'spending' : 'income';
+  const periodLabel = params.periodLabel ?? `${params.from} – ${params.to}`;
+  const scopeLabel = scope === 'period' ? periodLabel : 'all time';
 
   const statTiles = stats
     ? [
@@ -151,7 +156,7 @@ export default function ReportSliceScreen() {
           value: (
             <Text style={[type.amount, styles.figure, { color: colors.text }]}>{stats.txCount}</Text>
           ),
-          hint: `${stats.allTimeCount} all time`,
+          hint: scope === 'period' ? `${stats.allTimeCount} all time` : undefined,
         },
       ]
     : [];
@@ -175,10 +180,21 @@ export default function ReportSliceScreen() {
               {slice?.name ?? 'Breakdown'}
             </Text>
             <Text style={[type.caption, { color: colors.textMuted }]}>
-              {kindLabel} · {params.periodLabel ?? `${params.from} – ${params.to}`}
+              {kindLabel} · {scopeLabel}
             </Text>
           </View>
         </View>
+
+        {/* Scope toggle — the stat grid AND the transaction list below both
+            follow it, so "Overall" is a real view rather than a footnote. */}
+        <SegmentedControl
+          options={[
+            { value: 'period', label: periodLabel },
+            { value: 'allTime', label: 'Overall' },
+          ]}
+          value={scope}
+          onChange={setScope}
+        />
 
         {/* Stat grid */}
         <View style={styles.statGrid}>
@@ -197,21 +213,33 @@ export default function ReportSliceScreen() {
           ))}
         </View>
 
-        {/* All-time context — deliberately ignores the period AND the filter,
-            so it answers "what does this cost me overall?" */}
+        {/* Context strip. While on the period tab this shows the lifetime
+            figure the period sits inside; on the Overall tab that number is
+            already in the grid, so it shows the span it covers instead. */}
         {stats ? (
           <View style={[styles.allTime, { backgroundColor: colors.surfaceAlt }]}>
-            <View style={styles.allTimeRow}>
-              <Feather name="clock" size={15} color={colors.textMuted} />
-              <Text style={[type.caption, styles.allTimeLabel, { color: colors.textMuted }]}>
-                All time {kindLabel} in this {DIM_NOUN[dim]}
-              </Text>
-              <Amount
-                valueMinor={stats.allTimeTotalMinor}
-                textStyle={type.label}
-                colorOverride={colors.text}
-              />
-            </View>
+            {scope === 'period' ? (
+              <View style={styles.allTimeRow}>
+                <Feather name="clock" size={15} color={colors.textMuted} />
+                <Text style={[type.caption, styles.allTimeLabel, { color: colors.textMuted }]}>
+                  All time {kindLabel} in this {DIM_NOUN[dim]}
+                </Text>
+                <Amount
+                  valueMinor={stats.allTimeTotalMinor}
+                  textStyle={type.label}
+                  colorOverride={colors.text}
+                />
+              </View>
+            ) : (
+              <View style={styles.allTimeRow}>
+                <Feather name="calendar" size={15} color={colors.textMuted} />
+                <Text style={[type.caption, styles.allTimeLabel, { color: colors.textMuted }]}>
+                  {stats.firstOccurredAt
+                    ? `Since ${format(new Date(stats.firstOccurredAt), 'd MMM yyyy')}`
+                    : 'No history yet'}
+                </Text>
+              </View>
+            )}
             <Text style={[type.caption, { color: colors.textSubtle }]}>
               {stats.lastOccurredAt
                 ? `Last transaction ${formatDistanceToNowStrict(new Date(stats.lastOccurredAt), { addSuffix: true })}`
@@ -226,7 +254,7 @@ export default function ReportSliceScreen() {
           <View style={styles.empty}>
             <Feather name="inbox" size={26} color={colors.textSubtle} />
             <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-              No approved {kindLabel} here in this period.
+              No approved {kindLabel} here {scope === 'period' ? 'in this period' : 'yet'}.
             </Text>
           </View>
         ) : (

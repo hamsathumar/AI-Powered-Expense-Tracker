@@ -203,6 +203,16 @@ export const layout = {
   keypadKeyH: 50,
   tabBarPaddingBottom: 22, // above the home indicator
 
+  // Accounts tab: floating search + filter bar with the add-account button
+  // stacked above it (all measured from the bottom of the screen area, which
+  // the tab navigator already ends at the tab bar).
+  accounts: {
+    floatingBottom: 12,
+    barHeight: 52,
+    buttonSize: 52,
+    stackGap: 10,
+  },
+
   // Reports tab (v2)
   reports: {
     trendChartH: 150, // plot area of the income-vs-expense chart
@@ -211,14 +221,15 @@ export const layout = {
     donutStroke: 30,
     insightTile: { size: 38, radius: 10 },
     breakdownTrackH: 6, // share bar under each breakdown row
-    filterFabBottom: 96, // clears the tab bar
+    filterFabBottom: 24, // rests just above the tab bar (the tab
+    // navigator already ends the screen there, so this is a plain margin)
   },
 } as const;
 
 /** Bottom-anchored content clearance (design-system-v2.md §4.3): any scroll
  *  view under the voice bar / a FAB needs at least this much bottom spacer so
  *  nothing scrolls beneath a floating control. */
-export const bottomClearance = { home: 200, accounts: 190, reports: 150 } as const;
+export const bottomClearance = { home: 200, accounts: 150, reports: 100 } as const;
 
 // ---------------------------------------------------------------------------
 // Typography (design-system.md §3)
