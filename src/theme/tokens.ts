@@ -131,6 +131,20 @@ export const recurringGroupColors = {
   other:        '#A2958B', // neutral
 } as const;
 
+/**
+ * Stable palette colour for an entity that has no colour of its own (people,
+ * and the recurring/one-off split). Hashing the id keeps a slice the same
+ * colour between renders and between sessions, so the donut doesn't reshuffle
+ * when amounts change order. Always paired with a label — never colour-alone.
+ */
+export function paletteColorForKey(key: string): string {
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  return categoryPalette[Math.abs(hash) % categoryPalette.length];
+}
+
 // ---------------------------------------------------------------------------
 // Layout (design-system.md §4) — base unit 4px
 // ---------------------------------------------------------------------------
@@ -188,12 +202,23 @@ export const layout = {
   fabSm: 56,
   keypadKeyH: 50,
   tabBarPaddingBottom: 22, // above the home indicator
+
+  // Reports tab (v2)
+  reports: {
+    trendChartH: 150, // plot area of the income-vs-expense chart
+    trendBarMinW: 3,
+    donutSize: 200,
+    donutStroke: 30,
+    insightTile: { size: 38, radius: 10 },
+    breakdownTrackH: 6, // share bar under each breakdown row
+    filterFabBottom: 96, // clears the tab bar
+  },
 } as const;
 
 /** Bottom-anchored content clearance (design-system-v2.md §4.3): any scroll
  *  view under the voice bar / a FAB needs at least this much bottom spacer so
  *  nothing scrolls beneath a floating control. */
-export const bottomClearance = { home: 200, accounts: 190 } as const;
+export const bottomClearance = { home: 200, accounts: 190, reports: 150 } as const;
 
 // ---------------------------------------------------------------------------
 // Typography (design-system.md §3)

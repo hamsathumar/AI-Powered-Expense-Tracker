@@ -9,7 +9,7 @@ import Svg, { Circle, G, Text as SvgText } from 'react-native-svg';
 
 import { Amount } from '@/components/Amount';
 import { useTheme } from '@/theme/ThemeContext';
-import { type } from '@/theme/tokens';
+import { layout, space, type } from '@/theme/tokens';
 
 export interface DonutSegment {
   id: string;
@@ -18,17 +18,19 @@ export interface DonutSegment {
   color: string;
 }
 
-const SIZE = 210;
-const STROKE = 34;
+const SIZE = layout.reports.donutSize;
+const STROKE = layout.reports.donutStroke;
 
 interface Props {
   segments: DonutSegment[];
   total: number;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
+  /** Caption above the centre figure — "Total", "Spending", "Income". */
+  centerLabel?: string;
 }
 
-export function DonutChart({ segments, total, selectedId, onSelect }: Props) {
+export function DonutChart({ segments, total, selectedId, onSelect, centerLabel = 'Total' }: Props) {
   const { colors } = useTheme();
   const r = (SIZE - STROKE) / 2;
   const c = SIZE / 2;
@@ -43,9 +45,15 @@ export function DonutChart({ segments, total, selectedId, onSelect }: Props) {
     start: positive.slice(0, i).reduce((sum, p) => sum + fractionOf(p.value), 0),
   }));
 
+  // Selecting a slice turns the hole into that slice's read-out, so the donut
+  // answers "how much was that?" without a separate detail panel.
+  const selected = arcs.find((a) => a.id === selectedId) ?? null;
+
   return (
     <View style={styles.wrap}>
       <Svg width={SIZE} height={SIZE}>
+        {/* Empty track — a donut with no data still reads as a chart. */}
+        <Circle cx={c} cy={c} r={r} fill="none" stroke={colors.surfaceAlt} strokeWidth={STROKE} />
         <G rotation={-90} origin={`${c}, ${c}`}>
           {arcs.map((a) => {
             const dashLen = a.fraction * circumference;
@@ -87,8 +95,15 @@ export function DonutChart({ segments, total, selectedId, onSelect }: Props) {
           })}
       </Svg>
       <View style={styles.center} pointerEvents="none">
-        <Text style={[type.caption, { color: colors.textMuted }]}>Total</Text>
-        <Amount valueMinor={total} textStyle={type.h2} />
+        <Text numberOfLines={1} style={[type.caption, styles.centerLabel, { color: colors.textMuted }]}>
+          {selected ? selected.label : centerLabel}
+        </Text>
+        <Amount valueMinor={selected ? selected.value : total} textStyle={type.h2} />
+        {selected ? (
+          <Text style={[type.caption, { color: colors.textSubtle }]}>
+            {Math.round(selected.fraction * 100)}% of total
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -100,6 +115,7 @@ const styles = StyleSheet.create({
     height: SIZE,
     alignSelf: 'center',
   },
+  centerLabel: { maxWidth: SIZE - 2 * STROKE - space.sm, textAlign: 'center' },
   center: {
     position: 'absolute',
     top: 0,

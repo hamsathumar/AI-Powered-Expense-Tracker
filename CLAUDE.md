@@ -116,7 +116,24 @@ or category breakdowns.
   docs. **Needs `npx expo prebuild` before the next run** — `expo-notifications`
   was added to `app.json`.
 
+- **Reports v2 ✅ (2026-08-23):** the Reports tab rebuilt around one shared
+  period + filter. `src/domain/reportRange.ts` (pure, tested) owns presets
+  (daily/weekly/monthly/yearly/custom), previous-period comparison, and the
+  trend chart's buckets; `db/queries/reports.ts` gained range+filter aware
+  queries (`getRangeSummary`, `getDailyTotals`, `getBreakdown`,
+  `getSliceStats`, `listSliceTransactionIds`) that still enforce the golden
+  rule in SQL. New UI in `src/components/reports/` (balance card with
+  vs-previous deltas, Quick Insights, bar/line TrendChart, Dropdown,
+  BreakdownRow, filter sheet) plus a drill-down route
+  `src/app/reports/[dim]/[id].tsx`. Breakdowns slice by category / account /
+  person / recurring-vs-one-off, for spending or income.
+  The SQL itself lives in a pure `db/queries/reportSql.ts` (no db handle) so
+  `reportSql.test.ts` can execute every statement against a real engine via
+  node's built-in `node:sqlite`, using the schema read straight out of
+  `migrations.ts`. **Add report SQL there, not inline** — a `GROUP BY` on an
+  output alias shipped broken precisely because no test ever ran the SQL.
+
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 186 tests). Gemini model name is user-editable in Settings —
+(`npm test` — 236 tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

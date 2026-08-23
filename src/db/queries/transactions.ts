@@ -270,6 +270,29 @@ export async function listTransactionItems(
   return rows.map(toListItem);
 }
 
+/**
+ * Joined display rows for a known set of ids, newest first. Report drill-downs
+ * resolve *which* rows they want in the reports SQL layer (where the golden
+ * rule and the report filter live) and hydrate them here, so the display join
+ * stays defined in exactly one place.
+ */
+export async function listTransactionItemsByIds(ids: string[]): Promise<TransactionListItem[]> {
+  if (ids.length === 0) return [];
+  const db = await getDb();
+  const byId = new Map<string, TransactionListItem>();
+  // SQLite caps bound parameters (999 by default) — chunk to stay under it.
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const rows = await db.getAllAsync<JoinedRow>(
+      `${JOINED_SELECT} WHERE t.id IN (${chunk.map(() => '?').join(',')})`,
+      ...chunk,
+    );
+    for (const row of rows) byId.set(row.id, toListItem(row));
+  }
+  // Preserve the caller's ordering.
+  return ids.map((id) => byId.get(id)).filter((item): item is TransactionListItem => item != null);
+}
+
 export async function listRecentTransactionItems(limit = 50): Promise<TransactionListItem[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<JoinedRow>(

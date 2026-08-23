@@ -70,3 +70,22 @@ export function parseAmountInput(
   if (minor === 0) return allowZero ? 0 : null;
   return minor;
 }
+
+/**
+ * Axis-sized money: 5000000 → "50K", 125050 → "1.3K", 4500 → "45".
+ * Unsigned and symbol-less by design — chart axes have no room, and the units
+ * are established by the chart's own labelling.
+ */
+export function formatCompactMinor(minor: number): string {
+  const major = Math.abs(minor) / 100;
+  const scale = (value: number) => (value >= 10 ? String(Math.round(value)) : String(Math.round(value * 10) / 10));
+  if (major >= 1_000_000) return `${scale(major / 1_000_000)}M`;
+  if (major >= 1_000) return `${scale(major / 1_000)}K`;
+  return String(Math.round(major));
+}
+
+/** 0.1234 → "12%". Shares are always paired with the value they describe. */
+export function formatPercent(fraction: number, decimals = 0): string {
+  const pct = fraction * 100;
+  return `${pct.toFixed(decimals)}%`;
+}
