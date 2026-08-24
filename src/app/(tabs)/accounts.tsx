@@ -32,7 +32,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountCard } from '@/components/AccountCard';
@@ -331,8 +330,12 @@ export default function AccountsScreen() {
         renderItem={({ item }) => {
           const pending = item.tx.status === 'pending';
           return (
-            <Animated.View layout={LinearTransition.duration(motion.layout)}>
-              <SwipeableRow
+            // NOTE: do NOT wrap these rows in a Reanimated layout animation.
+            // `LinearTransition` on the items of a virtualized list (SectionList
+            // / FlatList) makes rows measure to zero and never appear — the data
+            // is there, the row just never draws. That is what hid approved
+            // transactions here while Home's plain .map() list kept showing them.
+            <SwipeableRow
                 // Pending rows can be triaged in place; anything else can only
                 // be deleted, which still asks first.
                 left={
@@ -373,8 +376,7 @@ export default function AccountsScreen() {
                   }}>
                   <TransactionRow item={item} />
                 </PressableScale>
-              </SwipeableRow>
-            </Animated.View>
+            </SwipeableRow>
           );
         }}
         ListEmptyComponent={

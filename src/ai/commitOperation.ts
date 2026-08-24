@@ -9,7 +9,7 @@
  * can bypass the gate.
  */
 import { evaluateApproval, type Blocker, type GateResult } from '@/ai/interpretation/gate';
-import { resolveDateExpression } from '@/ai/interpretation/dates';
+import { toNewTransaction } from '@/ai/interpretation/toTransaction';
 import type { ResolvedOperation, ResolvedRef } from '@/ai/interpretation/types';
 import type { EntityLite, ResolveContext } from '@/ai/interpretation/resolve';
 import { listAccounts } from '@/db/queries/accounts';
@@ -20,7 +20,7 @@ import {
   getPendingOperation,
   listPendingOperations,
 } from '@/db/queries/pendingOperations';
-import { insertTransaction, type NewTransaction } from '@/db/queries/transactions';
+import { insertTransaction } from '@/db/queries/transactions';
 
 export interface CommitResult {
   committed: boolean;
@@ -78,32 +78,6 @@ function refresh(op: ResolvedOperation, ctx: ResolveContext): ResolvedOperation 
   };
 }
 
-function toNewTransaction(op: ResolvedOperation): NewTransaction {
-  const { iso } = resolveDateExpression(op.dateExpression, new Date());
-  const base = {
-    status: 'approved' as const,
-    source: 'voice' as const,
-    name: op.name,
-    amountMinor: op.amountMinor,
-    occurredAt: iso,
-    confidenceFlags: [] as never[],
-  };
-  switch (op.operation) {
-    case 'expense':
-    case 'income':
-      return { ...base, type: op.operation, accountId: op.account!.id!, categoryId: op.category!.id! };
-    case 'transfer':
-      return { ...base, type: 'transfer', accountId: op.account!.id!, toAccountId: op.toAccount!.id! };
-    case 'lending':
-      return {
-        ...base,
-        type: 'lending',
-        accountId: op.account!.id!,
-        personId: op.person!.id!,
-        direction: op.direction!,
-      };
-  }
-}
 
 /**
  * Attempt to commit one pending operation. Returns blockers instead of
@@ -120,7 +94,8 @@ export async function commitPendingOperation(id: string): Promise<CommitResult> 
   const gate = evaluateApproval(op);
   if (!gate.approvable) return { committed: false, blockers: gate.blockers };
 
-  const inserted = await insertTransaction(toNewTransaction(op));
+  // The capture time, not now — see toTransaction.ts.
+  const inserted = await insertTransaction(toNewTransaction(op, record.createdAt));
   await deletePendingOperation(id);
   return { committed: true, transactionId: inserted.id, blockers: [] };
 }
