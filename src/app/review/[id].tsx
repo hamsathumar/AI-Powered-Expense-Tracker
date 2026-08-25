@@ -9,20 +9,24 @@
  * gate. Nothing is defaulted here — the user chooses every value.
  */
 import { Feather } from '@expo/vector-icons';
+import { format } from 'date-fns';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Amount } from '@/components/Amount';
+import { AmountInput } from '@/components/AmountInput';
+import { DateTimeField } from '@/components/DateTimeField';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { commitPendingOperation } from '@/ai/commitOperation';
+import { resolveDateExpression } from '@/ai/interpretation/dates';
 import { evaluateApproval } from '@/ai/interpretation/gate';
 import type { LendingDirection, ResolvedOperation, ResolvedRef } from '@/ai/interpretation/types';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
 import { deletePendingOperation, getPendingOperation, updatePendingOperation } from '@/db/queries/pendingOperations';
+import { formatMinorUnits, parseAmountInput } from '@/domain/money';
 import type { Account, Category, Person } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, layout, radius, space, type } from '@/theme/tokens';
@@ -94,6 +98,12 @@ export default function ReviewOperationScreen() {
   const [expenseCats, setExpenseCats] = useState<Category[]>([]);
   const [incomeCats, setIncomeCats] = useState<Category[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  // Editable fields (audit F5). Held as their own state so a half-typed amount
+  // never has to round-trip through the operation.
+  const [amountText, setAmountText] = useState('');
+  const [nameText, setNameText] = useState('');
+  const [date, setDate] = useState<Date | null>(null);
+  const [capturedAt, setCapturedAt] = useState<Date>(() => new Date());
 
   useEffect(() => {
     Promise.all([
@@ -110,6 +120,14 @@ export default function ReviewOperationScreen() {
         setExpenseCats(ec);
         setIncomeCats(ic);
         setPeople(ppl);
+        setNameText(rec.op.name);
+        setAmountText(rec.op.amountMinor === null ? '' : formatMinorUnits(rec.op.amountMinor).replace(/,/g, ''));
+        // The date the operation currently means: its expression resolved
+        // against the CAPTURE time, exactly as the commit path will read it.
+        const reference = new Date(rec.createdAt);
+        const safeReference = Number.isNaN(reference.getTime()) ? new Date() : reference;
+        setCapturedAt(safeReference);
+        setDate(new Date(resolveDateExpression(rec.op.dateExpression, safeReference).iso));
       })
       .catch((e) => {
         Alert.alert('Cannot open', String(e));
@@ -117,7 +135,40 @@ export default function ReviewOperationScreen() {
       });
   }, [id, router]);
 
-  const gate = useMemo(() => (op ? evaluateApproval(op) : null), [op]);
+  /**
+   * The operation as the user has it right now — the edits folded in (audit
+   * F5). The gate below runs on THIS, so the Approve button always reflects
+   * what would actually be committed.
+   */
+  const editedOp = useMemo<ResolvedOperation | null>(() => {
+    if (!op) return null;
+    const parsedAmount = parseAmountInput(amountText);
+    const amountChanged = parsedAmount !== null && parsedAmount !== op.amountMinor;
+
+    const originalDate = new Date(resolveDateExpression(op.dateExpression, capturedAt).iso);
+    const dateChanged =
+      date !== null && format(date, 'yyyy-MM-dd') !== format(originalDate, 'yyyy-MM-dd');
+
+    // Editing a field IS the confirmation the matching conflict was asking
+    // for, so those clear themselves; everything else needs "Keep as-is".
+    const conflicts = op.conflicts.filter((c) => {
+      if (amountChanged && (c.kind === 'amount_uncertain' || c.kind === 'amount_by_reference')) return false;
+      if (dateChanged && c.kind === 'date_unresolved') return false;
+      return true;
+    });
+
+    return {
+      ...op,
+      amountMinor: parsedAmount,
+      // A figure the user typed is the strongest grounding there is.
+      amountProvenance: amountChanged ? 'USER_EXPLICIT' : op.amountProvenance,
+      name: nameText.trim() || op.name,
+      dateExpression: dateChanged ? format(date!, 'yyyy-MM-dd') : op.dateExpression,
+      conflicts,
+    };
+  }, [op, amountText, nameText, date, capturedAt]);
+
+  const gate = useMemo(() => (editedOp ? evaluateApproval(editedOp) : null), [editedOp]);
 
   // Specialized operations are completed in their dedicated editors — redirect
   // there rather than through the ordinary review screen.
@@ -137,6 +188,26 @@ export default function ReviewOperationScreen() {
   const specialized = op.kind === 'bill_split' || op.kind === 'recurring';
   const isExpInc = op.kind === 'expense' || op.kind === 'income';
   const categories = op.operation === 'income' ? incomeCats : expenseCats;
+  // What still needs confirming AFTER the user's edits are folded in.
+  const conflicts = editedOp?.conflicts ?? op.conflicts;
+
+  /**
+   * "Heard 'Nusky' — did you mean Nuski?" (audit F10). Near-matches are only
+   * ever offered, never applied: the ref stays ambiguous and the gate keeps
+   * blocking until the user actually picks one.
+   */
+  const suggestionFor = (ref: ResolvedRef | null): string | null => {
+    if (!ref || ref.status !== 'ambiguous' || ref.options.length === 0) return null;
+    if (!ref.reference) return null;
+    const names = ref.options.map((o) => o.name).join(', ');
+    return `Heard “${ref.reference}” — did you mean ${names}?`;
+  };
+
+  const Suggestion = ({ refValue }: { refValue: ResolvedRef | null }) => {
+    const hint = suggestionFor(refValue);
+    if (!hint) return null;
+    return <Text style={[type.caption, { color: colors.textSubtle }]}>{hint}</Text>;
+  };
 
   const patch = (next: Partial<ResolvedOperation>) => setOp((prev) => (prev ? { ...prev, ...next } : prev));
 
@@ -157,8 +228,8 @@ export default function ReviewOperationScreen() {
   };
 
   const save = async () => {
-    if (!op) return;
-    await updatePendingOperation(id, op);
+    if (!editedOp) return;
+    await updatePendingOperation(id, editedOp);
   };
 
   const approve = async () => {
@@ -181,28 +252,50 @@ export default function ReviewOperationScreen() {
       <ScreenHeader title="Finish details" />
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={[styles.summary, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.summaryTop}>
-            <Text style={[type.h2, { color: colors.text, flex: 1 }]} numberOfLines={1}>
-              {op.name}
-            </Text>
-            <Amount valueMinor={op.amountMinor} txType={op.operation} />
-          </View>
+          <Text style={[type.caption, { color: colors.textMuted }]}>{op.operation.toUpperCase()}</Text>
           {op.transcript ? (
             <Text style={[type.body, { color: colors.textSubtle, fontStyle: 'italic' }]}>“{op.transcript}”</Text>
           ) : null}
-          <Text style={[type.caption, { color: colors.textMuted }]}>
-            {op.operation.toUpperCase()}
-            {op.dateExpression ? ` · ${op.dateExpression}` : ''}
-          </Text>
         </View>
 
-        {op.conflicts.length > 0 ? (
+        {/* Editable core fields (audit F5): a near-miss is fixed here, never by
+            rejecting and re-entering the whole transaction by hand. */}
+        {!specialized ? (
+          <>
+            <AmountInput value={amountText} onChange={setAmountText} />
+            <View style={styles.group}>
+              <Text style={[type.sectionLabel, { color: colors.textMuted }]}>Name</Text>
+              <TextInput
+                value={nameText}
+                onChangeText={setNameText}
+                placeholder="What was it for?"
+                placeholderTextColor={colors.textSubtle}
+                style={[
+                  type.body,
+                  styles.textField,
+                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+                ]}
+              />
+            </View>
+            <View style={styles.group}>
+              <Text style={[type.sectionLabel, { color: colors.textMuted }]}>Date</Text>
+              {date ? <DateTimeField value={date} onChange={setDate} /> : null}
+              {op.dateExpression ? (
+                <Text style={[type.caption, { color: colors.textSubtle }]}>You said “{op.dateExpression}”</Text>
+              ) : null}
+            </View>
+          </>
+        ) : null}
+
+        {conflicts.length > 0 ? (
           <View style={styles.group}>
             <Text style={[type.sectionLabel, { color: colors.warning }]}>Please confirm</Text>
-            {op.conflicts.map((c, i) => (
+            {conflicts.map((c, i) => (
               <View key={i} style={[styles.conflict, { borderColor: colors.warning }]}>
                 <Text style={[type.body, { color: colors.text, flex: 1 }]}>{c.note || c.kind}</Text>
-                <Pressable accessibilityRole="button" onPress={() => acknowledgeConflict(i)}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => acknowledgeConflict(op.conflicts.indexOf(c))}>
                   <Text style={[type.label, { color: colors.primary }]}>Keep as-is</Text>
                 </Pressable>
               </View>
@@ -231,35 +324,42 @@ export default function ReviewOperationScreen() {
                 />
               ))}
             </Group>
+            <Suggestion refValue={op.account} />
 
             {isExpInc ? (
-              <Group colors={colors} title="Category">
-                {categories.map((c) => (
-                  <Chip
-                  colors={colors}
-                    key={c.id}
-                    label={c.name}
-                    active={op.category?.id === c.id}
-                    onPress={() => patch({ category: resolvedRef(c.id, c.name) })}
-                  />
-                ))}
-              </Group>
+              <>
+                <Group colors={colors} title="Category">
+                  {categories.map((c) => (
+                    <Chip
+                      colors={colors}
+                      key={c.id}
+                      label={c.name}
+                      active={op.category?.id === c.id}
+                      onPress={() => patch({ category: resolvedRef(c.id, c.name) })}
+                    />
+                  ))}
+                </Group>
+                <Suggestion refValue={op.category} />
+              </>
             ) : null}
 
             {op.kind === 'transfer' ? (
-              <Group colors={colors} title="To account">
-                {accounts
-                  .filter((a) => a.id !== op.account?.id)
-                  .map((a) => (
-                    <Chip
-                  colors={colors}
-                      key={a.id}
-                      label={a.name}
-                      active={op.toAccount?.id === a.id}
-                      onPress={() => patch({ toAccount: resolvedRef(a.id, a.name) })}
-                    />
-                  ))}
-              </Group>
+              <>
+                <Group colors={colors} title="To account">
+                  {accounts
+                    .filter((a) => a.id !== op.account?.id)
+                    .map((a) => (
+                      <Chip
+                        colors={colors}
+                        key={a.id}
+                        label={a.name}
+                        active={op.toAccount?.id === a.id}
+                        onPress={() => patch({ toAccount: resolvedRef(a.id, a.name) })}
+                      />
+                    ))}
+                </Group>
+                <Suggestion refValue={op.toAccount} />
+              </>
             ) : null}
 
             {op.kind === 'lending' ? (
@@ -278,6 +378,7 @@ export default function ReviewOperationScreen() {
                     <Chip colors={colors} label={`+ Add “${op.person.reference}”`} active={false} onPress={addPersonFromReference} />
                   ) : null}
                 </Group>
+                <Suggestion refValue={op.person} />
                 <Group colors={colors} title="Direction">
                   {DIRECTIONS.map((d) => (
                     <Chip
@@ -318,7 +419,12 @@ export default function ReviewOperationScreen() {
 const styles = StyleSheet.create({
   scroll: { padding: layout.screenPaddingH, gap: space.xl, paddingBottom: space.xxl },
   summary: { borderRadius: layout.cardRadius, borderWidth: StyleSheet.hairlineWidth, padding: space.lg, gap: space.sm },
-  summaryTop: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
+  textField: {
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: space.md,
+    minHeight: 48,
+  },
   group: { gap: space.sm },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: { borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: space.md, paddingVertical: space.sm },

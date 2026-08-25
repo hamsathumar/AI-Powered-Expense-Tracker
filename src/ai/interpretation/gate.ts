@@ -52,7 +52,11 @@ export function evaluateApproval(op: ResolvedOperation): GateResult {
   }
 
   // Amount must be a grounded positive integer with acceptable provenance.
-  if (!Number.isInteger(op.amountMinor) || op.amountMinor <= 0) {
+  // `null` is the audit-F3 "heard the intent, never heard the figure" state:
+  // the row lives in the queue, but this is what keeps it out of the ledger.
+  if (op.amountMinor === null) {
+    blockers.push(b('amount_not_grounded', 'No amount yet — add one before approving.'));
+  } else if (!Number.isInteger(op.amountMinor) || op.amountMinor <= 0) {
     blockers.push(b('amount_not_grounded', 'The amount is not a grounded value.'));
   }
   if (op.amountProvenance !== 'USER_EXPLICIT' && op.amountProvenance !== 'AI_INTERPRETED') {

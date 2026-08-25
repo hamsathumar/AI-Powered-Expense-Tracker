@@ -299,8 +299,7 @@ export default function VoiceScreen() {
           showsVerticalScrollIndicator={false}>
           {nothing ? (
             <Text style={[type.body, { color: colors.textMuted }]}>
-              No transaction amount was detected, so nothing was recorded. Kaasu never invents an
-              amount — try again with the number included.
+              Kaasu heard nothing it could record. Try again — say the amount and what it was for.
             </Text>
           ) : (
             confirmItems.map((item, i) => (
@@ -320,7 +319,9 @@ export default function VoiceScreen() {
             <View style={[styles.hintPill, { borderColor: colors.warning }]}>
               <Feather name="alert-circle" size={13} color={isDark ? colors.warning : colors.lending} />
               <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
-                {job.unqualifiedCount} heard without an amount — not logged
+                {job.unqualifiedCount === 1
+                  ? '1 needs an amount before it counts'
+                  : `${job.unqualifiedCount} need an amount before they count`}
               </Text>
             </View>
           ) : null}

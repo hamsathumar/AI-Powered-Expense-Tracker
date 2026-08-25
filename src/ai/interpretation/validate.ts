@@ -15,6 +15,7 @@
  *
  * Pure and synchronous — no I/O, no crypto — so it is fully unit-testable.
  */
+import { resolveDateExpression } from './dates';
 import { detectInjection, isSuspiciousEntityReference, sanitiseName } from './injection';
 import { resolveName, type NameContext } from './naming';
 import {
@@ -104,10 +105,41 @@ function normDateKind(v: unknown): DateKind {
 const MAGNITUDE_WORDS =
   /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|lakh|lac|crore|grand|dozen|[0-9]+k|[0-9]+m)\b/i;
 
-/** The user's expression must plausibly encode a numeric magnitude (digit or spoken number). */
+/** Romanised Tamil number words the user actually speaks (audit F2). Spelling
+ *  varies by speaker, so common variants are listed. Units (one…ninety) match
+ *  as whole words; magnitude stems (ayiram, nooru, laksham, kodi) match as
+ *  substrings because Tamil compounds them — "rendayiram" (2000) contains no
+ *  standalone word. */
+const TAMIL_MAGNITUDE_WORDS =
+  /\b(onnu|onru|oru|rendu|irandu|moonu|moondru|munu|naalu|nalu|nanku|anju|ainthu|aaru|aru|ezhu|elu|ettu|onbathu|onpathu|pathu|paththu|patthu|irupathu|muppathu)\b|(a{1,2}yira(m|th)?|noo?ru|noothi|laksham?|latcham?|lacham?|kodi)/i;
+
+/** Tamil-script number stems. `\b` does not work across Tamil codepoints and
+ *  compounds fuse the initial vowel (ரெண்டாயிரம் carries யிர, not ஆயிரம்), so
+ *  these are stem substrings. Tamil numeral digits (௦–௯) count as digits too. */
+const TAMIL_SCRIPT_MAGNITUDES = ['யிர', 'ஆயிரம்', 'நூறு', 'நூற்', 'நூத்தி', 'லட்சம்', 'கோடி', 'பத்து'];
+
+/** The user's expression must plausibly encode a numeric magnitude (digit or
+ *  spoken number — English, romanised Tamil, or Tamil script). */
 function expressionSupportsAmount(expr: string): boolean {
-  if (/\d/.test(expr)) return true;
-  return MAGNITUDE_WORDS.test(expr);
+  if (/[\d௦-௯]/.test(expr)) return true;
+  if (MAGNITUDE_WORDS.test(expr)) return true;
+  if (TAMIL_MAGNITUDE_WORDS.test(expr)) return true;
+  return TAMIL_SCRIPT_MAGNITUDES.some((w) => expr.includes(w));
+}
+
+/**
+ * Audit F1 ("that amount" bug): an expression that refers BACK to an amount
+ * already stated in the same utterance. Such an amount is not invented — it is
+ * grounded by reference, provided its value exactly matches another grounded
+ * amount in the same interpretation (checked by the caller). Deliberately a
+ * closed list: anything not clearly anaphoric stays ungrounded.
+ */
+const ANAPHORIC_AMOUNT =
+  /\b(that|the\s+same|this|it|same)\b[\s\S]{0,24}?\b(amount|money|sum|figure|value)\b|^\s*(it|that|the\s+same|same)\s*$|\b(full|whole|entire)\s+(amount|sum)\b|அதே\s*தொகை|அந்த\s*தொகை/i;
+
+export function isAnaphoricAmountExpression(expr: string | null): boolean {
+  if (!expr) return false;
+  return ANAPHORIC_AMOUNT.test(expr);
 }
 
 /**
@@ -137,6 +169,48 @@ function toAmount(raw: unknown): Amount {
     provenance,
     state: normState(o.state),
     grounded,
+  };
+}
+
+/**
+ * Audit F1: second-chance grounding for an anaphoric amount. "I received 2000…
+ * and transferred that amount" used to drop the transfer, because "that
+ * amount" carries no digits. An ungrounded amount is promoted when ALL of:
+ *  (a) its expression is clearly anaphoric,
+ *  (b) the model carried a concrete positive value for it, and
+ *  (c) that value EXACTLY matches another grounded amount in the same
+ *      utterance (the pool) — a deterministic cross-check, so nothing is
+ *      invented.
+ * The caller must attach the returned blocking `amount_by_reference` conflict
+ * so the user confirms the link before approving.
+ */
+function groundByReference(
+  rawAmount: unknown,
+  amount: Amount,
+  pool: Set<number>,
+): { amount: Amount; conflict: Conflict } | null {
+  if (amount.grounded) return null;
+  if (!isAnaphoricAmountExpression(amount.expression)) return null;
+  const value = asNumber(asObject(rawAmount).value);
+  if (value === null || value <= 0) return null;
+  const minor = Math.round(value * 100);
+  if (!pool.has(minor)) return null;
+  return {
+    amount: { ...amount, valueMinor: minor, provenance: 'AI_INTERPRETED', grounded: true },
+    conflict: {
+      kind: 'amount_by_reference',
+      note: `Amount read as the same ${minor % 100 === 0 ? minor / 100 : (minor / 100).toFixed(2)} mentioned earlier in this sentence (“${amount.expression}”). Confirm before approving.`,
+    },
+  };
+}
+
+/** Audit F6: a grounded amount the model itself marked AMBIGUOUS must be
+ *  confirmed, not silently presented as certain. */
+function ambiguousAmountConflict(amount: Amount): Conflict | null {
+  if (!amount.grounded || amount.state !== 'AMBIGUOUS') return null;
+  return {
+    kind: 'amount_uncertain',
+    note: `The amount was uncertain${amount.expression ? ` (“${amount.expression}”)` : ''} — check the figure against the transcript before approving.`,
   };
 }
 
@@ -243,14 +317,17 @@ const droppedRefNote = (refs: string[]): Conflict => ({
 
 // ── Main entry ───────────────────────────────────────────────────────────
 export interface ValidateOptions {
-  /** Reference "now" — reserved for future relative-date resolution notes. */
+  /** Reference "now" — used to check whether a stated date expression is
+   *  resolvable at all (audit F4). The real resolution still happens at
+   *  commit, against the CAPTURE time. */
   now?: Date;
 }
 
 export function validateInterpretation(
   input: unknown,
-  _opts: ValidateOptions = {},
+  opts: ValidateOptions = {},
 ): ValidatedInterpretation {
+  const now = opts.now ?? new Date();
   const raw = asObject(input);
   const transcript = asString(raw.transcript) ?? '';
   const issues: string[] = [];
@@ -261,24 +338,74 @@ export function validateInterpretation(
   let counter = 0;
   const nextId = (prefix: string) => `${prefix}-${counter++}`;
 
+  // ── Audit F1 pre-scan: every grounded amount in the utterance. An anaphoric
+  // amount ("that amount") may be promoted only against this pool.
+  const groundedPool = new Set<number>();
+  for (const item of [...asArray(raw.candidates), ...asArray(raw.unqualifiedIntents)]) {
+    const a = toAmount(asObject(item).amount);
+    if (a.grounded && a.valueMinor !== null) groundedPool.add(a.valueMinor);
+  }
+  for (const item of asArray(raw.specializedOperations)) {
+    const o = asObject(item);
+    const a = toAmount(o.total ?? o.baseAmount ?? o.amount);
+    if (a.grounded && a.valueMinor !== null) groundedPool.add(a.valueMinor);
+  }
+
+  /** Promote an anaphoric amount against the pool; report through `issues`. */
+  const withReferenceGrounding = (
+    rawAmount: unknown,
+    amount: Amount,
+  ): { amount: Amount; conflict: Conflict | null } => {
+    const promoted = groundByReference(rawAmount, amount, groundedPool);
+    if (!promoted) return { amount, conflict: null };
+    issues.push('amount grounded by reference to another amount in the same utterance');
+    return promoted;
+  };
+
+  /**
+   * Audit F4: a stated date expression the app-owned resolver cannot read
+   * becomes a blocking conflict — without this, `toNewTransaction` would
+   * silently record the capture day. Ordinary candidates only: specialized
+   * operations open their dedicated editors, where the concrete date is
+   * visible and editable before anything is saved.
+   */
+  const unresolvedDateConflict = (date: DateExpr): Conflict | null => {
+    if (!date.expression) return null;
+    if (resolveDateExpression(date.expression, now).resolved) return null;
+    return {
+      kind: 'date_unresolved',
+      note: `Couldn't turn “${date.expression}” into a date — approving records it on the day it was spoken. Confirm, or reject and re-enter with the date.`,
+    };
+  };
+
   const pushUnqualified = (
     src: Record<string, unknown>,
     operation: OrdinaryKind | 'unknown',
     amount: Amount,
     reason: RejectionReason,
   ) => {
+    const account = toRefOrNull(src.account);
+    const category = toRefOrNull(src.category);
+    const person = toRefOrNull(src.person);
     unqualified.push({
       localId: nextId('uq'),
       operation,
       amount, // grounded === false guaranteed by caller
-      account: toRefOrNull(src.account),
-      category: toRefOrNull(src.category),
-      person: toRefOrNull(src.person),
+      account,
+      category,
+      person,
       date: toDate(src.dateExpression),
+      // Named like any other operation so it is readable in the queue (F3).
+      name: nameFor(src.name, {
+        operation: operation === 'unknown' ? 'expense' : operation,
+        categoryReference: category?.reference,
+        personReference: person?.reference,
+        accountReference: account?.reference,
+      }),
       evidence: toEvidence(src.evidence),
       rejectionReason: reason,
       promoted: false,
-      entersQueue: false,
+      committable: false,
     });
   };
 
@@ -287,7 +414,8 @@ export function validateInterpretation(
   // decides candidate-vs-unqualified purely from recomputed grounding.
   const processOrdinary = (rawItem: unknown) => {
     const src = asObject(rawItem);
-    const amount = toAmount(src.amount);
+    const promoted = withReferenceGrounding(src.amount, toAmount(src.amount));
+    const amount = promoted.amount;
     const operation = normOrdinary(src.operation);
 
     if (!amount.grounded) {
@@ -301,6 +429,9 @@ export function validateInterpretation(
 
     const isExpInc = operation === 'expense' || operation === 'income';
     const conflicts = toConflicts(src.conflicts);
+    if (promoted.conflict) conflicts.push(promoted.conflict);
+    const uncertain = ambiguousAmountConflict(amount);
+    if (uncertain) conflicts.push(uncertain);
     const requestedLabelRaw = asString(src.requestedLabel);
     const requestedLabel = requestedLabelRaw?.trim().toLowerCase() ?? null;
     const normalizedLabel = normOrdinary(requestedLabel);
@@ -320,6 +451,10 @@ export function validateInterpretation(
     const direction = operation === 'lending' ? normDirection(src.direction) : null;
     if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
 
+    const date = toDate(src.dateExpression);
+    const dateConflict = unresolvedDateConflict(date);
+    if (dateConflict) conflicts.push(dateConflict);
+
     candidates.push({
       localId: nextId('cand'),
       operation,
@@ -330,7 +465,7 @@ export function validateInterpretation(
       person,
       direction,
       requestedLabel,
-      date: toDate(src.dateExpression),
+      date,
       name: nameFor(src.name, {
         operation,
         categoryReference: category?.reference,
@@ -360,6 +495,12 @@ export function validateInterpretation(
     const direction = operation === 'lending' ? normDirection(src.direction) : null;
     const conflicts = [...toConflicts(src.conflicts), ...extraConflicts];
     if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
+    const uncertain = ambiguousAmountConflict(amount);
+    if (uncertain) conflicts.push(uncertain);
+
+    const date = toDate(src.dateExpression ?? src.anchorDateExpression);
+    const dateConflict = unresolvedDateConflict(date);
+    if (dateConflict) conflicts.push(dateConflict);
 
     candidates.push({
       localId: nextId('cand'),
@@ -371,7 +512,7 @@ export function validateInterpretation(
       person,
       direction,
       requestedLabel: null,
-      date: toDate(src.dateExpression ?? src.anchorDateExpression),
+      date,
       name: nameFor(src.name, {
         operation,
         categoryReference: category?.reference,
@@ -390,7 +531,8 @@ export function validateInterpretation(
     const kind = typeof src.operationKind === 'string' ? src.operationKind.trim().toLowerCase() : '';
 
     if (kind === 'bill_split') {
-      const total = toAmount(src.total ?? src.amount);
+      const promotedTotal = withReferenceGrounding(src.total ?? src.amount, toAmount(src.total ?? src.amount));
+      const total = promotedTotal.amount;
       if (!total.grounded) {
         pushUnqualified(src, 'expense', total, 'NO_TRANSACTION_VALUE_DETECTED');
         return;
@@ -405,13 +547,16 @@ export function validateInterpretation(
       // this is an ordinary expense — never a Bill Split.
       if (splitEvidence.length === 0 || participants.length < 1) {
         issues.push('bill_split downgraded to ordinary expense: no explicit split evidence');
-        downgradeToOrdinary(src, 'expense', total, []);
+        downgradeToOrdinary(src, 'expense', total, promotedTotal.conflict ? [promotedTotal.conflict] : []);
         return;
       }
       const payer = toRefOrNull(src.payerRef ?? src.payer, dropped);
       const account = toRefOrNull(src.account, dropped);
       const category = toRefOrNull(src.category, dropped);
       const conflicts = toConflicts(src.conflicts);
+      if (promotedTotal.conflict) conflicts.push(promotedTotal.conflict);
+      const uncertainTotal = ambiguousAmountConflict(total);
+      if (uncertainTotal) conflicts.push(uncertainTotal);
       if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
 
       specialized.push({
@@ -437,7 +582,11 @@ export function validateInterpretation(
     }
 
     if (kind === 'recurring') {
-      const base = toAmount(src.baseAmount ?? src.amount ?? src.total);
+      const promotedBase = withReferenceGrounding(
+        src.baseAmount ?? src.amount ?? src.total,
+        toAmount(src.baseAmount ?? src.amount ?? src.total),
+      );
+      const base = promotedBase.amount;
       const op = normOrdinary(src.operation) ?? 'expense';
       if (!base.grounded) {
         pushUnqualified(src, op, base, 'NO_TRANSACTION_VALUE_DETECTED');
@@ -450,12 +599,14 @@ export function validateInterpretation(
       //  - clear/strong + evidence → recurring operation
       //  - ambiguous → ordinary one-time candidate WITH a blocking conflict
       //  - one_time / no evidence → plain ordinary candidate
+      const carried = promotedBase.conflict ? [promotedBase.conflict] : [];
       if (evidence.length === 0 || strength === 'one_time') {
-        downgradeToOrdinary(src, op, base, []);
+        downgradeToOrdinary(src, op, base, carried);
         return;
       }
       if (strength === 'ambiguous') {
         downgradeToOrdinary(src, op, base, [
+          ...carried,
           {
             kind: 'recurrence_vs_onetime',
             note: 'Recurring intent is ambiguous; recorded as one-time pending your confirmation.',
@@ -470,6 +621,9 @@ export function validateInterpretation(
       const person = op === 'lending' ? toRefOrNull(src.person, dropped) : null;
       const direction = op === 'lending' ? normDirection(src.direction) : null;
       const conflicts = toConflicts(src.conflicts);
+      if (promotedBase.conflict) conflicts.push(promotedBase.conflict);
+      const uncertainBase = ambiguousAmountConflict(base);
+      if (uncertainBase) conflicts.push(uncertainBase);
       if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
 
       specialized.push({

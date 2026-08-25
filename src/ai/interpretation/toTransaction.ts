@@ -30,7 +30,9 @@ export function toNewTransaction(op: ResolvedOperation, capturedAt: string): New
     status: 'approved' as const,
     source: 'voice' as const,
     name: op.name,
-    amountMinor: op.amountMinor,
+    // Non-null by construction: the gate refuses a null/non-positive amount,
+    // and this function is only ever reached after the gate passes.
+    amountMinor: op.amountMinor!,
     occurredAt: iso,
     confidenceFlags: [] as never[],
   };
@@ -38,6 +40,9 @@ export function toNewTransaction(op: ResolvedOperation, capturedAt: string): New
   switch (op.operation) {
     case 'expense':
     case 'income':
+      // NOTE: the contract allows an optional person TAG on expense/income
+      // ("lunch with Sham"), but the transactions schema has no person column
+      // for these types, so the tag is intentionally not persisted.
       return { ...base, type: op.operation, accountId: op.account!.id!, categoryId: op.category!.id! };
     case 'transfer':
       return { ...base, type: 'transfer', accountId: op.account!.id!, toAccountId: op.toAccount!.id! };

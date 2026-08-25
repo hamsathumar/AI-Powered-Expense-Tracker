@@ -52,7 +52,7 @@ describe('CASE 1 — "I bought something yesterday."', () => {
     expect(v.candidates).toHaveLength(0);
     expect(v.unqualifiedIntents).toHaveLength(1);
     expect(v.unqualifiedIntents[0]!.promoted).toBe(false);
-    expect(v.unqualifiedIntents[0]!.entersQueue).toBe(false);
+    expect(v.unqualifiedIntents[0]!.committable).toBe(false);
     expect(v.unqualifiedIntents[0]!.date.expression).toBe('yesterday');
     expect(v.unqualifiedIntents[0]!.amount.grounded).toBe(false);
   });
@@ -309,7 +309,7 @@ describe('CASE 11 — "I spent Rs.1000 on food, and I bought something yesterday
     expect(v.candidates).toHaveLength(1);
     expect(v.candidates[0]!.amount.valueMinor).toBe(100000);
     expect(v.unqualifiedIntents).toHaveLength(1);
-    expect(v.unqualifiedIntents[0]!.entersQueue).toBe(false);
+    expect(v.unqualifiedIntents[0]!.committable).toBe(false);
   });
 });
 

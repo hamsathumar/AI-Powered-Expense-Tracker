@@ -208,6 +208,44 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // ── v6 — a pending operation may be waiting for its AMOUNT (audit F3) ──
+    // Until now an intent the user clearly voiced but without a resolvable
+    // amount ("I paid the electricity bill") was thrown away after validation:
+    // only a count survived, so the information was unrecoverable. Those
+    // intents now enter the queue as ordinary pending rows with a NULL amount,
+    // which the user completes on the review screen.
+    //
+    // `CHECK (amount > 0)` has to go for that, and SQLite cannot drop a CHECK
+    // in place — the table is rebuilt. The safety boundary is untouched: the
+    // final gate blocks any operation whose amount is not a positive integer,
+    // so a NULL-amount row can never reach the ledger.
+    version: 6,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE pending_operations_v6 (
+          id              TEXT PRIMARY KEY,
+          kind            TEXT NOT NULL,
+          operation       TEXT NOT NULL,
+          name            TEXT NOT NULL,
+          amount          INTEGER CHECK (amount IS NULL OR amount > 0),
+          transcript      TEXT,
+          date_expression TEXT,
+          has_conflicts   INTEGER NOT NULL DEFAULT 0,
+          payload         TEXT NOT NULL,
+          created_at      TEXT NOT NULL,
+          updated_at      TEXT NOT NULL
+        );
+        INSERT INTO pending_operations_v6
+          SELECT id, kind, operation, name, amount, transcript, date_expression,
+                 has_conflicts, payload, created_at, updated_at
+          FROM pending_operations;
+        DROP TABLE pending_operations;
+        ALTER TABLE pending_operations_v6 RENAME TO pending_operations;
+        CREATE INDEX idx_pending_ops_created ON pending_operations(created_at);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

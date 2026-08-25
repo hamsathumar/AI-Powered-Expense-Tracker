@@ -1,5 +1,12 @@
 # Kaasu Transaction AI — Current Architecture Audit (Read-Only)
 
+> **HISTORICAL DOCUMENT (banner added 2026-08-25).** This audit describes the
+> PRE-V1 pipeline (`parseVoice.ts`, the literal-regex injection detector, the
+> old top-level `validate.ts`), which was fully replaced by the Transaction AI
+> V1 implementation and no longer exists in the codebase. Keep for evidence
+> lineage only — do not act on its file references. The current audit is
+> `Test/AI_PIPELINE_AUDIT_2026-08-25.md`.
+
 **Type:** Evidence-gathering & architecture-discovery. **No source files were modified.**
 **Codebase state:** branch `main`, commit `e990fa9` (audit performed 2026-08-16).
 **Inputs used:** the actual repository under `src/`, and `Test/AI_TEST_ANALYSIS.md`.

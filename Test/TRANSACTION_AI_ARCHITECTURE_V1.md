@@ -1,5 +1,21 @@
 # Kaasu — Transaction AI Architecture V1
 
+> **AMENDED — V1.2 (2026-08-25).** The validation layer (§9) gained
+> grounding-by-reference for anaphoric amounts, multilingual magnitude
+> checking, and blocking conflicts for AMBIGUOUS amounts; the date
+> architecture (§17) no longer allows an un-understood expression to commit
+> silently and understands far more wording. The Approval Queue (§18) now also
+> holds **unqualified intents** — items with no amount yet, which the gate
+> (§19) refuses to commit until the user supplies one; entity resolution (§10)
+> offers near-matches as `ambiguous` without ever resolving them.
+>
+> The AI interpretation layer (§5) gained a **second, conditional pass**: a
+> compound utterance is audited for money the first reading dropped or
+> double-counted, and re-interpreted if so. It is contained deterministically
+> (a claim whose amount is not in the transcript is discarded) and its output
+> re-enters the SAME validation and the SAME gate — the layer ordering is
+> unchanged. See `Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`.
+
 **Phase:** Architecture / Design (no implementation).
 **Status:** First formal architecture for the Transaction AI. Design-level only.
 **Inputs:** `Test/KAASU_TRANSACTION_AI_REQUIREMENTS.md` (finalized requirements), `Test/CURRENT_AI_ARCHITECTURE_AUDIT.md`, `Test/AI_TEST_ANALYSIS.md`, `Test/AI_TEST_CASE_LOG.md`, and inspection of the current `src/ai/*`, `src/db/queries/*`, and queue code.

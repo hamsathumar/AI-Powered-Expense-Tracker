@@ -74,21 +74,28 @@ export function noteAppSuspended(): void {
   if (pumping) suspendedDuringRequest = true;
 }
 
-function summarise(job: VoiceJob, names: string[]): { title: string; body: string } {
+function summarise(
+  job: VoiceJob,
+  names: string[],
+  needsAmount: number,
+): { title: string; body: string } {
   if (names.length === 0) {
     return {
       title: 'Nothing logged',
       body: job.transcript
-        ? `Kaasu heard no amount in “${job.transcript.slice(0, 80)}”, so nothing was recorded.`
-        : 'Kaasu heard no amount, so nothing was recorded.',
+        ? `Kaasu could not record anything from “${job.transcript.slice(0, 80)}”.`
+        : 'Kaasu could not record anything from that.',
     };
   }
+  // Audit F3: an item still missing its amount is IN the queue, not lost —
+  // say so, so the user knows there is something to finish.
+  const tail = needsAmount > 0 ? ` ${needsAmount} still ${needsAmount === 1 ? 'needs' : 'need'} an amount.` : '';
   if (names.length === 1) {
-    return { title: '1 transaction ready', body: `${names[0]} is waiting in your review queue.` };
+    return { title: '1 transaction ready', body: `${names[0]} is waiting in your review queue.${tail}` };
   }
   return {
     title: `${names.length} transactions ready`,
-    body: `${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''} are waiting in your review queue.`,
+    body: `${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''} are waiting in your review queue.${tail}`,
   };
 }
 
@@ -112,8 +119,8 @@ async function runJob(job: VoiceJob): Promise<void> {
     // Only tell the user separately when they are not already watching the
     // result appear on the voice screen.
     if (AppState.currentState !== 'active') {
-      const { names } = await describeResult(parsed.pendingIds);
-      await notifyVoiceParse(summarise(job, names));
+      const { names, needsAmount } = await describeResult(parsed.pendingIds);
+      await notifyVoiceParse(summarise(job, names, needsAmount));
       await markVoiceJobNotified(job.id);
     }
     emit();
@@ -140,14 +147,17 @@ async function runJob(job: VoiceJob): Promise<void> {
 }
 
 /** Read back the names of the operations a job produced, for the notification. */
-async function describeResult(pendingIds: string[]): Promise<{ names: string[] }> {
-  if (pendingIds.length === 0) return { names: [] };
+async function describeResult(pendingIds: string[]): Promise<{ names: string[]; needsAmount: number }> {
+  if (pendingIds.length === 0) return { names: [], needsAmount: 0 };
   try {
     const { evaluatePendingByIds } = await import('@/ai/commitOperation');
     const items = await evaluatePendingByIds(pendingIds);
-    return { names: items.map((i) => i.op.name) };
+    return {
+      names: items.map((i) => i.op.name),
+      needsAmount: items.filter((i) => i.op.amountMinor === null).length,
+    };
   } catch {
-    return { names: [] };
+    return { names: [], needsAmount: 0 };
   }
 }
 

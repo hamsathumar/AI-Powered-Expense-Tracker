@@ -153,7 +153,14 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
                     <Text numberOfLines={1} style={[styles.name, { color: colors.text }]}>
                       {item.op.name}
                     </Text>
-                    <Amount valueMinor={item.op.amountMinor} txType={item.op.operation} />
+                    {item.op.amountMinor === null ? (
+                      // Audit F3 — no amount was heard; never render a fake zero.
+                      <Text style={[type.label, { color: isDark ? colors.warning : colors.lending }]}>
+                        Amount needed
+                      </Text>
+                    ) : (
+                      <Amount valueMinor={item.op.amountMinor} txType={item.op.operation} />
+                    )}
                   </View>
                   <Text numberOfLines={1} style={[type.caption, { color: colors.textMuted }]}>
                     {metaLine(item)}

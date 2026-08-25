@@ -156,7 +156,13 @@ export function ConfirmCard({
           <Feather name={TYPE_ICON[op.operation]} size={14} color={typeColor} />
           <Text style={[styles.typeLabel, { color: typeColor }]}>{TYPE_LABEL[op.operation]}</Text>
         </View>
-        <Amount valueMinor={op.amountMinor} txType={op.operation} textStyle={styles.amount} />
+        {op.amountMinor === null ? (
+          // Audit F3: heard the intent, never heard the figure. Say so plainly
+          // rather than rendering a zero that looks like a real amount.
+          <Text style={[styles.amount, { color: isDark ? colors.warning : colors.lending }]}>Amount needed</Text>
+        ) : (
+          <Amount valueMinor={op.amountMinor} txType={op.operation} textStyle={styles.amount} />
+        )}
       </View>
 
       <Text numberOfLines={1} style={[styles.name, { color: colors.text }]}>

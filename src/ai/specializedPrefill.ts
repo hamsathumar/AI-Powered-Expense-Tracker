@@ -74,7 +74,9 @@ export function buildBillSplitPrefill(op: ResolvedOperation, people: PersonLite[
 
   return {
     name: op.name,
-    amountText: amountToInputText(op.amountMinor),
+    // Specialized operations always carry a grounded total (validation
+    // guarantees it), so the null branch is unreachable here.
+    amountText: amountToInputText(op.amountMinor ?? 0),
     accountId: op.account?.status === 'resolved' ? op.account.id : null,
     categoryId: op.category?.status === 'resolved' ? op.category.id : null,
     participantIds: [...participantIds],
@@ -83,9 +85,22 @@ export function buildBillSplitPrefill(op: ResolvedOperation, people: PersonLite[
   };
 }
 
-/** The existing recurring editor has no "yearly"; map unknowns to its default. */
+/** The existing recurring editor has no "yearly"; map unknowns to its default.
+ *  A YEARLY hint silently becoming monthly is exactly the TC-025 failure shape,
+ *  so `recurringFrequencyNote` surfaces it — never let the fallback be quiet. */
 function mapFrequency(hint: string | undefined): RecurringFrequency {
   return hint === 'weekly' || hint === 'daily' || hint === 'monthly' ? hint : 'monthly';
+}
+
+/**
+ * Audit F7: a user-facing note when the user stated a schedule the editor
+ * cannot represent (yearly), so the monthly fallback never lands silently.
+ * Returns null when the stated frequency mapped faithfully.
+ */
+export function recurringFrequencyNote(op: ResolvedOperation): string | null {
+  const rec = recurringPayload(op);
+  if (rec?.intervalHint !== 'yearly') return null;
+  return 'You said this repeats yearly, but Kaasu schedules support daily, weekly, or monthly — it was set to Monthly. Adjust the schedule before saving.';
 }
 
 /** The recurring payload, or null when this operation is not a recurring one. */
@@ -138,7 +153,7 @@ export function buildRecurringInitial(op: ResolvedOperation, now: Date): Recurri
     id: 'ai-prefill',
     type: op.operation,
     name: op.name,
-    amountMinor: op.amountMinor,
+    amountMinor: op.amountMinor ?? 0, // grounded by validation; null unreachable
     accountId: resolvedId(op.account),
     toAccountId: resolvedId(op.toAccount),
     categoryId: resolvedId(op.category),

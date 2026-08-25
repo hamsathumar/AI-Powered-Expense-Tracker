@@ -11,6 +11,25 @@
 
 **Implementation:** None. This document defines *behaviour*, not prompts, schemas, or code.
 
+> **AMENDED — V1.2 (2026-08-25).** The pipeline audit added: grounding by
+> reference for anaphoric amounts (with a mandatory confirm conflict),
+> language-independent amount grounding, blocking conflicts for un-resolvable
+> date expressions and AMBIGUOUS amounts, and a no-silent-fallback rule for
+> unrepresentable recurrence cadences.
+>
+> Its second phase amended a deeper principle: **preserving what the user said
+> does not stop at interpretation.** An intent voiced without a resolvable
+> amount is no longer discarded — it is queued, visibly incomplete and
+> impossible to commit, for the user to finish. "Not committable" and "not
+> worth keeping" are no longer treated as the same thing.
+>
+> Its third phase added a **self-audit** for compound utterances — the AI may
+> now be asked to check its own reading for money it dropped. This does not
+> soften §13 (No Helpful Fabrication) or the untrusted-output principle: the
+> auditor may only point at money that provably appears in the transcript, and
+> any corrected reading is validated exactly like a first one. See
+> `Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`.
+
 > **AMENDED — V1.1 (2026-08-21).** The second real-world test round
 > (`Test/AI_TEST_CASE_LOG_v2.md`, TC-021…TC-027) confirmed every V1 safety
 > boundary but exposed gaps in **completeness**. §8, §9, §14, §17 and §23 below

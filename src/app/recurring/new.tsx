@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildRecurringInitial, recurringEndNote } from '@/ai/specializedPrefill';
+import { buildRecurringInitial, recurringEndNote, recurringFrequencyNote } from '@/ai/specializedPrefill';
 import { RecurringForm } from '@/components/RecurringForm';
 import { createTemplate } from '@/db/queries/recurring';
 import { deletePendingOperation, getPendingOperation } from '@/db/queries/pendingOperations';
@@ -28,9 +28,12 @@ export default function NewRecurringScreen() {
         if (rec) {
           const now = new Date();
           setInitial(buildRecurringInitial(rec.op, now));
-          // TC-025: never leave a stated-but-unparsed end condition silent.
-          const note = recurringEndNote(rec.op, now);
-          if (note) Alert.alert('Check the end date', note);
+          // TC-025 / audit F7: never let a stated-but-unrepresentable schedule
+          // detail (end condition, yearly cadence) fall back silently.
+          const notes = [recurringFrequencyNote(rec.op), recurringEndNote(rec.op, now)].filter(
+            (n): n is string => n !== null,
+          );
+          if (notes.length > 0) Alert.alert('Check the schedule', notes.join('\n\n'));
         }
         setReady(true);
       })

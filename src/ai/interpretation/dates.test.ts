@@ -158,3 +158,37 @@ describe('resolveRecurrenceEnd — TC-025 ("for the next 3 months" became "Ends:
     expect(r.endDate).toBeNull();
   });
 });
+
+// ── Audit F11 — month-end edges in "until <month>" resolution ────────────
+describe('resolveRecurrenceEnd — month-end anchors (audit F11)', () => {
+  it('a day-31 anchor does not overflow past a short month ("until february")', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until february',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor: new Date('2026-01-31T12:00:00.000Z'),
+    });
+    expect(r.endDate).toBe('2026-02-28'); // 2026 is not a leap year — never 2026-03-03
+    expect(r.resolved).toBe(true);
+  });
+
+  it('a stated day earlier in the anchor month rolls to next year, not before the anchor', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until 5 august',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor, // 21 Aug 2026
+    });
+    expect(r.endDate).toBe('2027-08-05');
+  });
+
+  it('"until december" from a day-31 anchor lands on 31 December', () => {
+    const r = resolveRecurrenceEnd({
+      endExpression: 'until december',
+      occurrenceCount: null,
+      frequency: 'monthly',
+      anchor: new Date('2026-08-31T12:00:00.000Z'),
+    });
+    expect(r.endDate).toBe('2026-12-31');
+  });
+});

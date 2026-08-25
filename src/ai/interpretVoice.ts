@@ -10,11 +10,27 @@
  * safety gate (src/ai/commitOperation.ts).
  */
 import { getGeminiApiKey } from '@/ai/secureConfig';
-import { fileToBase64, interpretAudioWithGemini } from '@/ai/geminiInterpret';
+import {
+  buildCorrectionNote,
+  chooseInterpretation,
+  critiqueHasFindings,
+  critiqueInterpretation,
+  shouldCritique,
+} from '@/ai/critic';
+import { fileToBase64, interpretAudioWithGemini, interpretTextWithGemini } from '@/ai/geminiInterpret';
 import type { InterpretPromptContext } from '@/ai/interpretPrompt';
 import { validateInterpretation } from '@/ai/interpretation/validate';
-import { resolveCandidate, resolveSpecialized, type ResolveContext } from '@/ai/interpretation/resolve';
-import type { ResolvedOperation, UnqualifiedIntent } from '@/ai/interpretation/types';
+import {
+  resolveCandidate,
+  resolveSpecialized,
+  resolveUnqualified,
+  type ResolveContext,
+} from '@/ai/interpretation/resolve';
+import type {
+  ResolvedOperation,
+  UnqualifiedIntent,
+  ValidatedInterpretation,
+} from '@/ai/interpretation/types';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { listPeople } from '@/db/queries/people';
@@ -63,6 +79,69 @@ async function loadContext(): Promise<{ resolve: ResolveContext; prompt: Interpr
   };
 }
 
+interface AuditInput {
+  apiKey: string;
+  model: string;
+  context: InterpretPromptContext;
+  raw: unknown;
+  validated: ValidatedInterpretation;
+  now: Date;
+}
+
+/**
+ * Audit a compound utterance for money the first reading dropped or
+ * double-counted (audit F8d), and re-interpret if the auditor found something.
+ *
+ * Short, ordinary notes never reach the network here — `shouldCritique` filters
+ * them out, so the common case still costs exactly one call. Every failure
+ * path returns the ORIGINAL reading: an audit that errors, finds nothing, or
+ * produces a repair that drifts the wrong way changes nothing at all.
+ */
+async function auditCompoundUtterance(input: AuditInput): Promise<ValidatedInterpretation> {
+  const { validated, now } = input;
+  const transcript = validated.transcript;
+  if (!shouldCritique(transcript, validated)) return validated;
+
+  const critique = await critiqueInterpretation({
+    apiKey: input.apiKey,
+    model: input.model,
+    transcript,
+    interpretation: input.raw,
+  });
+  if (!critiqueHasFindings(critique)) return validated;
+
+  let repaired: ValidatedInterpretation;
+  try {
+    const rawRepair = await interpretTextWithGemini({
+      apiKey: input.apiKey,
+      model: input.model,
+      transcript,
+      context: input.context,
+      correctionNote: buildCorrectionNote(critique),
+    });
+    repaired = validateInterpretation(rawRepair, { now });
+  } catch {
+    return validated; // a failed repair must never cost the user the original
+  }
+
+  if (chooseInterpretation(validated, repaired, critique) === 'original') {
+    return {
+      ...validated,
+      issues: [...validated.issues, 'compound-utterance audit found issues but the re-read did not improve on them'],
+    };
+  }
+
+  return {
+    ...repaired,
+    // The transcript is the user's words — keep the one heard from the audio.
+    transcript,
+    issues: [
+      ...repaired.issues,
+      `compound-utterance audit applied (missing: ${critique.missing.length}, duplicated: ${critique.duplicated.length})`,
+    ],
+  };
+}
+
 export async function interpretVoice(
   audioUri: string,
   audioMimeType: string = DEFAULT_AUDIO_MIME,
@@ -80,13 +159,28 @@ export async function interpretVoice(
     context: ctx.prompt,
   });
 
-  const validated = validateInterpretation(raw, { now: new Date() });
+  const now = new Date();
+  const validated = await auditCompoundUtterance({
+    apiKey,
+    model,
+    context: ctx.prompt,
+    raw,
+    validated: validateInterpretation(raw, { now }),
+    now,
+  });
 
-  // Resolve every qualified operation against the CURRENT entities (app-owned).
+  // Resolve every operation against the CURRENT entities (app-owned).
+  // Unqualified intents are queued too (audit F3): they arrive with a null
+  // amount and cannot pass the gate, but the user can complete them instead of
+  // losing what they said.
   const ops: ResolvedOperation[] = [
     ...validated.candidates.map((c) => ({ ...resolveCandidate(c, ctx.resolve), transcript: validated.transcript })),
     ...validated.specializedOperations.map((s) => ({
       ...resolveSpecialized(s, ctx.resolve),
+      transcript: validated.transcript,
+    })),
+    ...validated.unqualifiedIntents.map((u) => ({
+      ...resolveUnqualified(u, ctx.resolve),
       transcript: validated.transcript,
     })),
   ];

@@ -31,21 +31,88 @@ function shiftDays(ref: Date, days: number): Date {
   return d;
 }
 
+/** Spoken counts the grammar below accepts in place of digits. */
+const SPOKEN_COUNTS: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, couple: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+
+function spokenCount(token: string): number | null {
+  const digits = Number(token);
+  if (Number.isInteger(digits) && digits > 0) return digits;
+  return SPOKEN_COUNTS[token.toLowerCase()] ?? null;
+}
+
+const COUNT = '(\\d{1,3}|a|an|one|two|couple|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+
+/** Keep the reference's time of day while moving the calendar date. */
+function atReferenceTime(reference: Date, y: number, monthIndex: number, day: number): Date {
+  const d = new Date(reference);
+  d.setDate(1); // never overflow while the month is being changed
+  d.setFullYear(y);
+  d.setMonth(monthIndex);
+  const lastDay = new Date(y, monthIndex + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+  return d;
+}
+
 export function resolveDateExpression(expression: string | null, reference: Date): DateResolution {
   const nowIso = reference.toISOString();
   if (!expression) return { iso: nowIso, resolved: true }; // unexpressed → reference now (honest default)
 
-  const e = expression.trim().toLowerCase();
+  // Strip filler that carries no date information ("on ", "at ", trailing ".").
+  const e = expression
+    .trim()
+    .toLowerCase()
+    .replace(/^(on|at|in)\s+/, '')
+    .replace(/[.,]+$/, '')
+    .trim();
+
   if (e === 'today' || e === 'now') return { iso: nowIso, resolved: true };
   if (e === 'yesterday') return { iso: shiftDays(reference, -1).toISOString(), resolved: true };
   if (e === 'tomorrow') return { iso: shiftDays(reference, 1).toISOString(), resolved: true };
-  if (e === 'day before yesterday') return { iso: shiftDays(reference, -2).toISOString(), resolved: true };
+  if (e === 'day before yesterday' || e === 'the day before yesterday')
+    return { iso: shiftDays(reference, -2).toISOString(), resolved: true };
+  if (e === 'day after tomorrow' || e === 'the day after tomorrow')
+    return { iso: shiftDays(reference, 2).toISOString(), resolved: true };
 
-  const agoMatch = e.match(/^(\d+)\s+days?\s+ago$/);
-  if (agoMatch) return { iso: shiftDays(reference, -Number(agoMatch[1])).toISOString(), resolved: true };
+  // Time-of-day words that still mean the reference DAY. Kaasu stores a
+  // timestamp but has no clock-time capture (Architecture §26 open question),
+  // so these resolve to the day, not to an invented hour — except the ones
+  // that plainly mean yesterday.
+  if (/^(this\s+)?(morning|afternoon|evening)$/.test(e) || e === 'tonight' || e === 'just now')
+    return { iso: nowIso, resolved: true };
+  if (e === 'last night' || e === 'yesterday night' || e === 'last evening')
+    return { iso: shiftDays(reference, -1).toISOString(), resolved: true };
+
+  // "3 days ago" / "two weeks ago" / "a month ago"
+  const agoMatch = e.match(new RegExp(`^${COUNT}\\s+(day|week|month|year)s?\\s+ago$`));
+  if (agoMatch) {
+    const n = spokenCount(agoMatch[1]!);
+    if (n !== null) {
+      const unit = agoMatch[2]!;
+      const d =
+        unit === 'day' ? addDays(reference, -n)
+        : unit === 'week' ? addWeeks(reference, -n)
+        : unit === 'month' ? addMonths(reference, -n)
+        : addYears(reference, -n);
+      return { iso: d.toISOString(), resolved: true };
+    }
+  }
+
+  // "last week" / "last month" / "last year" — the same weekday/day-of-month a
+  // period earlier, which is what "I paid it last month" means in practice.
+  const lastUnit = e.match(/^(last|past|previous)\s+(week|month|year)$/);
+  if (lastUnit) {
+    const unit = lastUnit[2]!;
+    const d =
+      unit === 'week' ? addWeeks(reference, -1) : unit === 'month' ? addMonths(reference, -1) : addYears(reference, -1);
+    return { iso: d.toISOString(), resolved: true };
+  }
+  if (/^(this)\s+(week|month|year)$/.test(e)) return { iso: nowIso, resolved: true };
 
   // "last friday" / "next monday" / "this tuesday" / bare "friday"
-  const wdMatch = e.match(/^(last|next|this)?\s*(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/);
+  const wdMatch = e.match(/^(last|next|this|past)?\s*(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/);
   if (wdMatch) {
     const qualifier = wdMatch[1] ?? '';
     const target = WEEKDAYS[wdMatch[2]!]!;
@@ -59,6 +126,51 @@ export function resolveDateExpression(expression: string | null, reference: Date
       if (qualifier === 'this' && target === current) delta = 0;
     }
     return { iso: shiftDays(reference, delta).toISOString(), resolved: true };
+  }
+
+  // ISO "2026-08-15" — also how the review screen's date picker writes back.
+  const isoMatch = e.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const y = Number(isoMatch[1]);
+    const monthIndex = Number(isoMatch[2]) - 1;
+    const day = Number(isoMatch[3]);
+    if (monthIndex >= 0 && monthIndex <= 11 && day >= 1 && day <= 31) {
+      return { iso: atReferenceTime(reference, y, monthIndex, day).toISOString(), resolved: true };
+    }
+  }
+
+  // "15 august" / "august 15" / "15 august 2026" / "august 15, 2026"
+  const monthNames = MONTHS.join('|');
+  const dayMonth =
+    e.match(new RegExp(`^(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${monthNames})(?:\\s+(\\d{4}))?$`)) ??
+    e.match(new RegExp(`^(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+(\\d{4}))?$`));
+  if (dayMonth) {
+    const first = dayMonth[1]!;
+    const monthFirst = MONTHS.includes(first);
+    const monthIndex = MONTHS.indexOf(monthFirst ? first : dayMonth[2]!);
+    const day = Number(monthFirst ? dayMonth[2] : first);
+    const year = dayMonth[3] ? Number(dayMonth[3]) : null;
+    if (monthIndex >= 0 && day >= 1 && day <= 31) {
+      let d = atReferenceTime(reference, year ?? reference.getFullYear(), monthIndex, day);
+      // No year stated: a date ahead of the reference means the year just past
+      // (spoken money notes describe what already happened).
+      if (year === null && d > reference) d = atReferenceTime(reference, reference.getFullYear() - 1, monthIndex, day);
+      return { iso: d.toISOString(), resolved: true };
+    }
+  }
+
+  // "the 15th" / "on the 3rd" — a day in the current month, past-leaning.
+  const dayOfMonth = e.match(/^(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)$/);
+  if (dayOfMonth) {
+    const day = Number(dayOfMonth[1]);
+    if (day >= 1 && day <= 31) {
+      let d = atReferenceTime(reference, reference.getFullYear(), reference.getMonth(), day);
+      if (d > reference) {
+        const prev = addMonths(reference, -1);
+        d = atReferenceTime(reference, prev.getFullYear(), prev.getMonth(), day);
+      }
+      return { iso: d.toISOString(), resolved: true };
+    }
   }
 
   return { iso: nowIso, resolved: false }; // unsupported expression → reference now, flagged
@@ -220,18 +332,23 @@ export function resolveRecurrenceEnd(input: RecurrenceEndInput): RecurrenceEndRe
     const monthIndex = MONTHS.indexOf(monthMatch[2]!.toLowerCase());
     const year = monthMatch[3] ? Number(monthMatch[3]) : null;
     const day = monthMatch[1] ? Number(monthMatch[1]) : null;
-    const base = new Date(anchor);
-    base.setMonth(monthIndex);
-    if (year !== null) base.setFullYear(year);
-    // No year given: the end must be in the future relative to the anchor.
-    if (year === null && base < anchor) base.setFullYear(base.getFullYear() + 1);
-    if (day !== null && day >= 1 && day <= 31) {
-      base.setDate(day);
-    } else {
+    // Set day 1 BEFORE the month so a day-31 anchor can never overflow into
+    // the following month (audit F11); the anchor's time of day is preserved
+    // so day-string derivation stays consistent with the anchor's.
+    const build = (y: number): Date => {
+      const d = new Date(anchor);
+      d.setDate(1);
+      d.setFullYear(y);
+      d.setMonth(monthIndex);
       // "until December" with no day -> the last day of that month.
-      base.setMonth(base.getMonth() + 1, 0);
-    }
-    return { endDate: toDayString(base), resolved: true, explicitNever: false };
+      const lastDay = new Date(y, monthIndex + 1, 0).getDate();
+      d.setDate(day !== null && day >= 1 && day <= 31 ? Math.min(day, lastDay) : lastDay);
+      return d;
+    };
+    let end = build(year ?? anchor.getFullYear());
+    // No year given: the end must not fall before the anchor.
+    if (year === null && end < anchor) end = build(anchor.getFullYear() + 1);
+    return { endDate: toDayString(end), resolved: true, explicitNever: false };
   }
 
   // "until 2027-03-01" / "until 1/3/2027"

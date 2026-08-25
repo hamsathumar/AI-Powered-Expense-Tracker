@@ -20,9 +20,11 @@ generic skill recommendations:
   motion, anti-patterns. Overrides any generic design skill.
 
 For the voice/AI layer specifically, `Test/` holds the AI blueprint. Read
-`TRANSACTION_AI_V1_1_AMENDMENTS.md` **first** — it records what changed after
-real-world testing and points into the V1 constitution / architecture /
-technical-contract documents.
+`TRANSACTION_AI_V1_2_AMENDMENTS.md` and `TRANSACTION_AI_V1_1_AMENDMENTS.md`
+**first** — they record what changed after real-world testing and the
+2026-08-25 pipeline audit (`AI_PIPELINE_AUDIT_2026-08-25.md`), and point into
+the V1 constitution / architecture / technical-contract documents.
+`CURRENT_AI_ARCHITECTURE_AUDIT.md` is historical (pre-V1) — do not act on it.
 
 ## Stack
 
@@ -148,7 +150,44 @@ or category breakdowns.
   **Do not re-add `animation: 'shift'` to the Tabs navigator** — it caused the
   blank-tab regression; animate content with `ScreenFade` instead.
 
+- **AI audit + V1.2 Phase 1 ✅ (2026-08-25):** full pipeline audit
+  (`Test/AI_PIPELINE_AUDIT_2026-08-25.md`, findings F1–F11) followed by the
+  Phase 1 fixes (`Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`): anaphoric amounts
+  ("that amount") grounded by reference with a confirm conflict; Tamil/mixed
+  amount expressions grounded (prompt guarantees digits in `expression`);
+  un-resolvable date expressions and AMBIGUOUS amounts now block via
+  conflicts; yearly-cadence fallback surfaced in the recurring editor; Gemini
+  key moved to a header. New suite `src/ai/interpretation/audit.test.ts`.
+  The on-device live transcript is **deliberately display-only** — never wire
+  it into interpretation.
+
+- **V1.2 Phase 2 ✅ (2026-08-25):** rejections became recoverable. An intent
+  heard without an amount is now **queued** (migration 6 allows a NULL
+  `pending_operations.amount`) as a visibly incomplete card the gate refuses to
+  commit, instead of being discarded; the review screen edits amount, name and
+  date (not just entities), gating on the edited operation; the relative-date
+  grammar covers "last month", "the 15th", "15 August", ISO, time-of-day; and
+  misheard entity names surface as near-match suggestions that stay
+  `ambiguous`. New suites `audit2.test.ts` + `migration6.test.ts` (the latter
+  runs shipped migration SQL against a real engine — do that for any future
+  table rebuild). Phase 3 (few-shot + responseSchema + two-stage/eval harness)
+  approved, not yet built.
+
+- **V1.2 Phase 3 ✅ (2026-08-25):** the model's own reading got better.
+  Seven worked examples in the system instruction (`interpretPrompt.ts`); a
+  declared Gemini `responseSchema` (`interpretSchema.ts`) + temperature 0, with
+  a **retry-without-schema fallback** so a rejected schema degrades instead of
+  breaking voice; a **compound-utterance critic** (`critic.ts`) that re-reads
+  long/multi-amount utterances for dropped or double-counted money, contained
+  by a deterministic "the amount must appear in the transcript" check and
+  re-validated through the normal gate; and an **eval harness** (`src/ai/eval/`)
+  — `eval.test.ts` replays recorded model outputs in `npm test`,
+  `GEMINI_API_KEY=... npx jest liveEval` scores the real model against the
+  corpus. **Run the live eval after any prompt/model/schema change**, and add a
+  corpus case whenever something reads wrong. Production deliberately stays a
+  single audio→JSON call; only a text entry point was added.
+
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 309 tests). Gemini model name is user-editable in Settings —
+(`npm test` — 400 tests, plus 16 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

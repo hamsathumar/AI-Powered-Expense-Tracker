@@ -49,7 +49,21 @@ export type ConflictKind =
   | 'entity_conflict'
   | 'recurrence_vs_onetime'
   | 'split_descriptive_vs_instructional'
-  | 'injection_suspected';
+  | 'injection_suspected'
+  /** App-attached (never model-supplied): the amount was grounded by matching
+   *  an anaphoric reference ("that amount") to another grounded amount in the
+   *  SAME utterance — confirm before approving. (Audit F1.) */
+  | 'amount_by_reference'
+  /** App-attached: the amount is grounded but the model marked its own reading
+   *  AMBIGUOUS — confirm the figure against the transcript. (Audit F6.) */
+  | 'amount_uncertain'
+  /** App-attached: a stated date expression the app cannot resolve; approving
+   *  would silently record the capture day. (Audit F4.) */
+  | 'date_unresolved'
+  /** App-attached: the utterance carried a financial intent but no operation
+   *  the app recognised, so a type was assumed and must be confirmed or
+   *  corrected before approval. (Audit F3.) */
+  | 'type_unconfirmed';
 
 export type DateKind = 'absolute' | 'relative' | 'named_weekday' | 'none';
 
@@ -159,11 +173,21 @@ export interface UnqualifiedIntent {
   category: EntityRef | null;
   person: EntityRef | null;
   date: DateExpr;
+  /** App-owned name, derived the same way a candidate's is, so the intent is
+   *  readable once it reaches the queue (audit F3). */
+  name: string;
   evidence: EvidenceSpan[];
   rejectionReason: RejectionReason;
-  /** Structural guarantees — an unqualified intent is NEVER a candidate. */
+  /** Structural guarantee — an unqualified intent is NEVER a candidate: it
+   *  cannot carry a grounded amount and cannot be committed. */
   promoted: false;
-  entersQueue: false;
+  /**
+   * Structural guarantee — it can never reach the ledger. Since audit F3 an
+   * unqualified intent DOES enter the review queue (as a null-amount pending
+   * row the user completes); what remains impossible is committing it, which
+   * the final gate enforces on the amount itself.
+   */
+  committable: false;
 }
 
 export interface ValidatedInterpretation {
@@ -194,7 +218,11 @@ export interface ResolvedOperation {
   localId: string;
   kind: OrdinaryKind | SpecializedKind;
   operation: OrdinaryKind;
-  amountMinor: number; // grounded, positive integer
+  /** Grounded positive integer, or NULL when the user voiced the intent but no
+   *  amount could be grounded (audit F3). A null amount is a genuine "not
+   *  known yet" — the final gate refuses to commit it, and the user supplies
+   *  the figure on the review screen. NEVER default it to a number. */
+  amountMinor: number | null;
   amountProvenance: Provenance;
   account: ResolvedRef | null;
   toAccount: ResolvedRef | null;

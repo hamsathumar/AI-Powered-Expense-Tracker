@@ -11,7 +11,7 @@
 import { evaluateApproval, type Blocker, type GateResult } from '@/ai/interpretation/gate';
 import { toNewTransaction } from '@/ai/interpretation/toTransaction';
 import type { ResolvedOperation, ResolvedRef } from '@/ai/interpretation/types';
-import type { EntityLite, ResolveContext } from '@/ai/interpretation/resolve';
+import { resolveRef, type EntityLite, type ResolveContext } from '@/ai/interpretation/resolve';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { listPeople } from '@/db/queries/people';
@@ -52,19 +52,12 @@ function refreshRef(ref: ResolvedRef | null, pool: EntityLite[]): ResolvedRef | 
     if (pool.some((e) => e.id === ref.id)) return { ...ref, status: 'resolved', options: [] };
     // fall through: the chosen id no longer exists — try to re-resolve by name
   }
-  if (ref.reference) {
-    const needle = ref.reference.trim().toLowerCase();
-    const matches = pool.filter((e) => e.name.trim().toLowerCase() === needle);
-    if (matches.length === 1) return { reference: ref.reference, id: matches[0]!.id, status: 'resolved', options: [] };
-    if (matches.length > 1)
-      return {
-        reference: ref.reference,
-        id: null,
-        status: 'ambiguous',
-        options: matches.map((m) => ({ id: m.id, name: m.name })),
-      };
-  }
-  return { reference: ref.reference, id: null, status: 'unresolved', options: [] };
+  // Re-run the SAME resolution rules used at interpretation time (including
+  // near-match suggestions), so the queue and the commit path can never
+  // disagree about what a name means.
+  return (
+    resolveRef({ reference: ref.reference, provenance: 'AI_INTERPRETED', state: 'KNOWN', candidates: [] }, pool) ?? null
+  );
 }
 
 function refresh(op: ResolvedOperation, ctx: ResolveContext): ResolvedOperation {
@@ -79,6 +72,24 @@ function refresh(op: ResolvedOperation, ctx: ResolveContext): ResolvedOperation 
 }
 
 
+/** Gate + insert + delete for one already-loaded record, against a shared
+ *  entity context. Committing never mutates entities, so one context is valid
+ *  for a whole bulk run. */
+async function commitRecord(
+  record: { id: string; op: ResolvedOperation; createdAt: string },
+  ctx: ResolveContext,
+): Promise<CommitResult> {
+  const op = refresh(record.op, ctx);
+
+  const gate = evaluateApproval(op);
+  if (!gate.approvable) return { committed: false, blockers: gate.blockers };
+
+  // The capture time, not now — see toTransaction.ts.
+  const inserted = await insertTransaction(toNewTransaction(op, record.createdAt));
+  await deletePendingOperation(record.id);
+  return { committed: true, transactionId: inserted.id, blockers: [] };
+}
+
 /**
  * Attempt to commit one pending operation. Returns blockers instead of
  * committing when the final gate does not pass. Only removes the pending row
@@ -87,17 +98,7 @@ function refresh(op: ResolvedOperation, ctx: ResolveContext): ResolvedOperation 
 export async function commitPendingOperation(id: string): Promise<CommitResult> {
   const record = await getPendingOperation(id);
   if (!record) return { committed: false, blockers: [{ code: 'unsupported_operation', message: 'Pending item not found.' }] };
-
-  const ctx = await loadContext();
-  const op = refresh(record.op, ctx);
-
-  const gate = evaluateApproval(op);
-  if (!gate.approvable) return { committed: false, blockers: gate.blockers };
-
-  // The capture time, not now — see toTransaction.ts.
-  const inserted = await insertTransaction(toNewTransaction(op, record.createdAt));
-  await deletePendingOperation(id);
-  return { committed: true, transactionId: inserted.id, blockers: [] };
+  return commitRecord(record, await loadContext());
 }
 
 export interface EvaluatedPending {
@@ -138,13 +139,14 @@ export async function evaluatePendingByIds(ids: string[]): Promise<EvaluatedPend
   return out;
 }
 
-/** Bulk approve — commits only the operations that pass the gate; others stay. */
+/** Bulk approve — commits only the operations that pass the gate; others stay.
+ *  One context load for the whole run (audit F11). */
 export async function commitAllApprovable(): Promise<{ committed: number; skipped: number }> {
-  const records = await listPendingOperations();
+  const [records, ctx] = await Promise.all([listPendingOperations(), loadContext()]);
   let committed = 0;
   let skipped = 0;
   for (const r of records) {
-    const res = await commitPendingOperation(r.id);
+    const res = await commitRecord(r, ctx);
     if (res.committed) committed++;
     else skipped++;
   }

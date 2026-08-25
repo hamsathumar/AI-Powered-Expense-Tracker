@@ -12,8 +12,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
+import { commitAllApprovable } from '@/ai/commitOperation';
 import { Amount } from '@/components/Amount';
 import { BalanceCanopy } from '@/components/BalanceCanopy';
+import { ScreenFade } from '@/components/motion/ScreenFade';
 import { PressableScale } from '@/components/PressableScale';
 import { QueueItemCard } from '@/components/QueueItemCard';
 import { QuickActions } from '@/components/QuickActions';
@@ -21,7 +23,8 @@ import { SectionHeader } from '@/components/SectionHeader';
 import { TransactionRow } from '@/components/TransactionRow';
 import { VoiceBar } from '@/components/VoiceBar';
 import { VoiceReviewSection, type VoiceReviewCounts } from '@/components/VoiceReviewSection';
-import { commitAllApprovable } from '@/ai/commitOperation';
+import { listPeopleWithNetBalances, type PersonWithNet } from '@/db/queries/people';
+import { listTemplates } from '@/db/queries/recurring';
 import {
   getMonthlySummary,
   getSpendingByCategory,
@@ -30,8 +33,6 @@ import {
   type CategorySpending,
   type MonthlySummary,
 } from '@/db/queries/reports';
-import { listPeopleWithNetBalances, type PersonWithNet } from '@/db/queries/people';
-import { listTemplates } from '@/db/queries/recurring';
 import {
   approveAllPending,
   listApprovedItemsForDay,
@@ -39,9 +40,9 @@ import {
   setTransactionStatus,
   type TransactionListItem,
 } from '@/db/queries/transactions';
+import { formatAmount } from '@/domain/money';
 import type { RecurringTemplate } from '@/domain/types';
 import { hapticTick } from '@/lib/haptics';
-import { ScreenFade } from '@/components/motion/ScreenFade';
 import { usePendingCount } from '@/state/PendingCount';
 import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
@@ -55,7 +56,6 @@ import {
   tabularNums,
   type,
 } from '@/theme/tokens';
-import { formatAmount } from '@/domain/money';
 
 const HOME_SPENDING_ROWS = 4;
 const smallAmount = { fontSize: 15, lineHeight: 20 };
@@ -203,207 +203,207 @@ export default function HomeScreen() {
     <View style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.primary }]}>
       <ScreenFade>
         <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={colors.onPrimary}
-            colors={[colors.primary]}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scroll}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.onPrimary}
+              colors={[colors.primary]}
+            />
+          }>
+          <BalanceCanopy
+            monthLabel={format(new Date(), 'MMMM')}
+            totalBalanceMinor={totalMinor}
+            monthIncomeMinor={summary.incomeMinor}
+            monthExpenseMinor={summary.expenseMinor}
+            pendingCount={reviewTotal}
           />
-        }>
-        <BalanceCanopy
-          monthLabel={format(new Date(), 'MMMM')}
-          totalBalanceMinor={totalMinor}
-          monthIncomeMinor={summary.incomeMinor}
-          monthExpenseMinor={summary.expenseMinor}
-          pendingCount={reviewTotal}
-        />
 
-        <View style={[styles.sheet, { backgroundColor: colors.bg }]}>
-          <QuickActions />
+          <View style={[styles.sheet, { backgroundColor: colors.bg }]}>
+            <QuickActions />
 
-          {/* To review — ONE approval queue: AI voice pending operations
+            {/* To review — ONE approval queue: AI voice pending operations
               (VoiceReviewSection, headerless) + manual pending transactions,
               under a single header with a single empty state. */}
-          <View style={styles.section}>
-            <SectionHeader
-              title="To review"
-              right={
-                <View style={styles.headerRight}>
-                  {reviewTotal > 0 ? (
-                    <View style={[styles.badge, { backgroundColor: colors.warning }]}>
-                      <Text style={[styles.badgeLabel, { color: badgeText }]}>{reviewTotal}</Text>
-                    </View>
-                  ) : null}
-                  {reviewTotal > 1 && readyCount > 0 ? (
-                    <Pressable accessibilityRole="button" onPress={bulkApprove} hitSlop={space.sm}>
-                      <Text style={[type.label, { color: colors.primary }]}>{bulkLabel}</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              }
-            />
-            <View style={styles.reviewStack}>
-              {/* Voice pending ops (renders nothing when empty) */}
-              <VoiceReviewSection onCountChange={setVoiceCounts} refreshToken={voiceRefresh} />
-
-              {pending.length > 0 ? (
-                <View style={styles.queueList}>
-                  {pending.map((item) => (
-                    <Animated.View
-                      key={item.tx.id}
-                      entering={FadeIn.duration(200)}
-                      exiting={FadeOut.duration(200)}
-                      layout={LinearTransition.duration(220)}>
-                      <QueueItemCard
-                        item={item}
-                        onApprove={() => act(item.tx.id, 'approved')}
-                        onReject={() => act(item.tx.id, 'rejected')}
-                        onEdit={() =>
-                          router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })
-                        }
-                      />
-                    </Animated.View>
-                  ))}
-                </View>
-              ) : null}
-
-              {reviewTotal === 0 ? (
-                <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Feather name="check-circle" size={22} color={colors.textSubtle} />
-                  <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-                    Queue is clear — tap mic to speak, or tap + to add something.
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          </View>
-
-          {/* Today — approved transactions logged today (any type) */}
-          <View style={styles.section}>
-            <SectionHeader title="Today" />
-            {todayItems.length === 0 ? (
-              <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Feather name="sunrise" size={22} color={colors.textSubtle} />
-                <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
-                  Nothing logged today yet — approved transactions land here as they happen.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.todayList}>
-                {todayItems.map((item) => (
-                  <TransactionRow key={item.tx.id} item={item} />
-                ))}
-              </View>
-            )}
-          </View>
-
-          {/* Spending this month */}
-          {spendRows.length > 0 ? (
             <View style={styles.section}>
               <SectionHeader
-                title="Spending this month"
+                title="To review"
                 right={
-                  <Amount
-                    valueMinor={summary.expenseMinor}
-                    textStyle={{ ...type.amount, ...smallAmount }}
-                    colorOverride={colors.textMuted}
-                  />
+                  <View style={styles.headerRight}>
+                    {reviewTotal > 0 ? (
+                      <View style={[styles.badge, { backgroundColor: colors.warning }]}>
+                        <Text style={[styles.badgeLabel, { color: badgeText }]}>{reviewTotal}</Text>
+                      </View>
+                    ) : null}
+                    {reviewTotal > 1 && readyCount > 0 ? (
+                      <Pressable accessibilityRole="button" onPress={bulkApprove} hitSlop={space.sm}>
+                        <Text style={[type.label, { color: colors.primary }]}>{bulkLabel}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 }
               />
-              <View style={styles.spendList}>
-                {spendRows.map((row) => {
-                  const pct =
-                    summary.expenseMinor > 0
-                      ? Math.round((row.totalMinor / summary.expenseMinor) * 100)
-                      : 0;
-                  return (
-                    <View key={row.key} style={styles.spendRow}>
-                      <View style={styles.spendTop}>
-                        <Feather name={row.icon} size={14} color={row.color} />
-                        <Text style={[type.body, styles.spendName, { color: colors.text }]} numberOfLines={1}>
-                          {row.name}
-                        </Text>
-                        <Text style={[type.caption, styles.pct, { color: colors.textMuted }]}>{pct}%</Text>
-                        <Amount
-                          valueMinor={row.totalMinor}
-                          textStyle={{ ...type.amount, ...smallAmount }}
-                          colorOverride={colors.text}
+              <View style={styles.reviewStack}>
+                {/* Voice pending ops (renders nothing when empty) */}
+                <VoiceReviewSection onCountChange={setVoiceCounts} refreshToken={voiceRefresh} />
+
+                {pending.length > 0 ? (
+                  <View style={styles.queueList}>
+                    {pending.map((item) => (
+                      <Animated.View
+                        key={item.tx.id}
+                        entering={FadeIn.duration(200)}
+                        exiting={FadeOut.duration(200)}
+                        layout={LinearTransition.duration(220)}>
+                        <QueueItemCard
+                          item={item}
+                          onApprove={() => act(item.tx.id, 'approved')}
+                          onReject={() => act(item.tx.id, 'rejected')}
+                          onEdit={() =>
+                            router.push({ pathname: '/transaction/[id]', params: { id: item.tx.id } })
+                          }
                         />
-                      </View>
-                      <View style={[styles.track, { backgroundColor: colors.surfaceAlt }]}>
-                        <View style={[styles.fill, { backgroundColor: row.color, width: `${pct}%` }]} />
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          ) : null}
+                      </Animated.View>
+                    ))}
+                  </View>
+                ) : null}
 
-          {/* Coming up — next recurring + who owes you */}
-          {hasComingUp ? (
-            <View style={styles.section}>
-              <SectionHeader title="Coming up" />
-              <View style={styles.comingList}>
-                {upcoming.map((t) => (
-                  <PressableScale
-                    key={t.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${t.name}, recurring`}
-                    onPress={() => router.push({ pathname: '/recurring/[id]', params: { id: t.id } })}
-                    scaleTo={0.98}
-                    style={[styles.comingRow, { backgroundColor: colors.surface }]}>
-                    <View style={[styles.comingTile, { backgroundColor: colors.primarySoft }]}>
-                      <Feather name="repeat" size={18} color={colors.primary} />
-                    </View>
-                    <View style={styles.comingText}>
-                      <Text style={[type.body, { color: colors.text }]} numberOfLines={1}>
-                        {t.name}
-                      </Text>
-                      <Text style={[type.caption, { color: colors.textMuted }]}>
-                        Recurring · due {format(new Date(t.nextDueDate), 'd MMM')}
-                      </Text>
-                    </View>
-                    <Amount
-                      valueMinor={t.amountMinor}
-                      textStyle={{ ...type.amount, ...smallAmount }}
-                      colorOverride={colors.text}
-                    />
-                  </PressableScale>
-                ))}
-                {owedTop.map(({ person, netMinor }) => (
-                  <PressableScale
-                    key={person.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${person.name} owes you`}
-                    onPress={() => router.push({ pathname: '/person/[id]', params: { id: person.id } })}
-                    scaleTo={0.98}
-                    style={[styles.comingRow, { backgroundColor: colors.surface }]}>
-                    <View style={[styles.avatar, { backgroundColor: colors.primarySoft }]}>
-                      <Text style={[styles.avatarText, { color: colors.primary }]}>
-                        {person.name.slice(0, 1).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={styles.comingText}>
-                      <Text style={[type.body, { color: colors.text }]} numberOfLines={1}>
-                        {person.name}
-                      </Text>
-                      <Text style={[type.caption, { color: colors.textMuted }]}>Tap to settle up</Text>
-                    </View>
-                    <Text style={[type.amount, smallAmount, { color: colors.lending }]}>
-                      Owes you {formatAmount(netMinor, symbol)}
+                {reviewTotal === 0 ? (
+                  <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <Feather name="check-circle" size={22} color={colors.textSubtle} />
+                    <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
+                      Queue is clear — tap mic to speak, or tap + to add something.
                     </Text>
-                  </PressableScale>
-                ))}
+                  </View>
+                ) : null}
               </View>
             </View>
-          ) : null}
 
-          <View style={{ height: bottomClearance.home }} />
-        </View>
+            {/* Today — approved transactions logged today (any type) */}
+            <View style={styles.section}>
+              <SectionHeader title="Today" />
+              {todayItems.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <Feather name="sunrise" size={22} color={colors.textSubtle} />
+                  <Text style={[type.body, styles.emptyText, { color: colors.textMuted }]}>
+                    Nothing logged today yet — approved transactions land here as they happen.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.todayList}>
+                  {todayItems.map((item) => (
+                    <TransactionRow key={item.tx.id} item={item} />
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Spending this month */}
+            {spendRows.length > 0 ? (
+              <View style={styles.section}>
+                <SectionHeader
+                  title="Spending this month"
+                  right={
+                    <Amount
+                      valueMinor={summary.expenseMinor}
+                      textStyle={{ ...type.amount, ...smallAmount }}
+                      colorOverride={colors.textMuted}
+                    />
+                  }
+                />
+                <View style={styles.spendList}>
+                  {spendRows.map((row) => {
+                    const pct =
+                      summary.expenseMinor > 0
+                        ? Math.round((row.totalMinor / summary.expenseMinor) * 100)
+                        : 0;
+                    return (
+                      <View key={row.key} style={styles.spendRow}>
+                        <View style={styles.spendTop}>
+                          <Feather name={row.icon} size={14} color={row.color} />
+                          <Text style={[type.body, styles.spendName, { color: colors.text }]} numberOfLines={1}>
+                            {row.name}
+                          </Text>
+                          <Text style={[type.caption, styles.pct, { color: colors.textMuted }]}>{pct}%</Text>
+                          <Amount
+                            valueMinor={row.totalMinor}
+                            textStyle={{ ...type.amount, ...smallAmount }}
+                            colorOverride={colors.text}
+                          />
+                        </View>
+                        <View style={[styles.track, { backgroundColor: colors.surfaceAlt }]}>
+                          <View style={[styles.fill, { backgroundColor: row.color, width: `${pct}%` }]} />
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
+
+            {/* Coming up — next recurring + who owes you */}
+            {hasComingUp ? (
+              <View style={styles.section}>
+                <SectionHeader title="Coming up" />
+                <View style={styles.comingList}>
+                  {upcoming.map((t) => (
+                    <PressableScale
+                      key={t.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${t.name}, recurring`}
+                      onPress={() => router.push({ pathname: '/recurring/[id]', params: { id: t.id } })}
+                      scaleTo={0.98}
+                      style={[styles.comingRow, { backgroundColor: colors.surface }]}>
+                      <View style={[styles.comingTile, { backgroundColor: colors.primarySoft }]}>
+                        <Feather name="repeat" size={18} color={colors.primary} />
+                      </View>
+                      <View style={styles.comingText}>
+                        <Text style={[type.body, { color: colors.text }]} numberOfLines={1}>
+                          {t.name}
+                        </Text>
+                        <Text style={[type.caption, { color: colors.textMuted }]}>
+                          Recurring · due {format(new Date(t.nextDueDate), 'd MMM')}
+                        </Text>
+                      </View>
+                      <Amount
+                        valueMinor={t.amountMinor}
+                        textStyle={{ ...type.amount, ...smallAmount }}
+                        colorOverride={colors.text}
+                      />
+                    </PressableScale>
+                  ))}
+                  {owedTop.map(({ person, netMinor }) => (
+                    <PressableScale
+                      key={person.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${person.name} owes you`}
+                      onPress={() => router.push({ pathname: '/person/[id]', params: { id: person.id } })}
+                      scaleTo={0.98}
+                      style={[styles.comingRow, { backgroundColor: colors.surface }]}>
+                      <View style={[styles.avatar, { backgroundColor: colors.primarySoft }]}>
+                        <Text style={[styles.avatarText, { color: colors.primary }]}>
+                          {person.name.slice(0, 1).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={styles.comingText}>
+                        <Text style={[type.body, { color: colors.text }]} numberOfLines={1}>
+                          {person.name}
+                        </Text>
+                        <Text style={[type.caption, { color: colors.textMuted }]}>Tap to settle up</Text>
+                      </View>
+                      <Text style={[type.amount, smallAmount, { color: colors.lending }]}>
+                        Owes you {formatAmount(netMinor, symbol)}
+                      </Text>
+                    </PressableScale>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            <View style={{ height: bottomClearance.home }} />
+          </View>
         </ScrollView>
       </ScreenFade>
 

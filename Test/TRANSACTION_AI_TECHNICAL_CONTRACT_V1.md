@@ -1,5 +1,25 @@
 # Kaasu — Transaction AI Technical Contract V1
 
+> **AMENDED — V1.2 (2026-08-25).** Four app-attached `ConflictKind` values
+> were added (`amount_by_reference`, `amount_uncertain`, `date_unresolved`,
+> `type_unconfirmed` — never accepted from the model), the Amount grounding
+> rule was widened to allow deterministic grounding-by-reference within one
+> utterance, and the prompt contract now requires digits inside `expression`
+> whenever `value` is set.
+>
+> Two shape changes: `ResolvedOperation.amountMinor` is now `number | null`
+> (`null` = queued but waiting for its figure), and
+> `UnqualifiedIntent.entersQueue: false` was **replaced** by
+> `committable: false` — since an unqualified intent now DOES enter the review
+> queue, while remaining impossible to commit. It also gained an app-owned
+> `name`.
+>
+> The contract is additionally expressed as a machine-readable Gemini
+> `responseSchema` (`src/ai/interpretSchema.ts`), which is the executable copy
+> of this document — **keep the two in step.** It constrains the container
+> only; validation remains authoritative over every value. See
+> `Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`.
+
 - **Project:** Kaasu — AI Expense Tracker
 - **Document:** Transaction AI Technical Contract V1
 - **Phase:** Technical Design
