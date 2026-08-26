@@ -55,7 +55,7 @@ import {
   setTransactionStatus,
   type TransactionListItem,
 } from '@/db/queries/transactions';
-import { accountDeltaMinor } from '@/domain/accountActivity';
+import { dayNetMinor } from '@/domain/accountActivity';
 import { formatAmount } from '@/domain/money';
 import type { Account, Category, Person } from '@/domain/types';
 import { hapticError, hapticPress, hapticSuccess, hapticTick } from '@/lib/haptics';
@@ -211,8 +211,10 @@ export default function AccountsScreen() {
     }
   };
 
-  // Group the transaction list by local day, with each day's net cash effect
-  // (v2 §6). Transactions arrive newest-first, so days stay in that order.
+  // Group the transaction list by local day, with each day's net (v2 §6).
+  // Across all accounts that net is SPENDING (golden rule); with one account
+  // selected it is that account's cash movement — see `dayNetMinor`.
+  // Transactions arrive newest-first, so days stay in that order.
   const sections = useMemo(() => {
     const byDay = new Map<string, TransactionListItem[]>();
     for (const item of transactions) {
@@ -222,10 +224,7 @@ export default function AccountsScreen() {
     return [...byDay.entries()].map(([key, data]) => ({
       key,
       title: dayTitle(data[0]!.tx.occurredAt),
-      netMinor: data.reduce(
-        (sum, i) => sum + accountDeltaMinor(i.tx, filter.accountId ?? undefined),
-        0,
-      ),
+      netMinor: data.reduce((sum, i) => sum + dayNetMinor(i.tx, filter.accountId ?? undefined), 0),
       data,
     }));
   }, [transactions, filter.accountId]);

@@ -187,8 +187,10 @@ export default function HomeScreen() {
         .slice(0, 2),
     [templates],
   );
-  const owedTop = useMemo(() => [...owed].sort((a, b) => b.netMinor - a.netMinor).slice(0, 2), [owed]);
-  const hasComingUp = upcoming.length > 0 || owedTop.length > 0;
+  // EVERY person who owes the user, largest first — an open debt you cannot see
+  // is one you forget to collect, so this list is deliberately uncapped.
+  const owedSorted = useMemo(() => [...owed].sort((a, b) => b.netMinor - a.netMinor), [owed]);
+  const hasComingUp = upcoming.length > 0 || owedSorted.length > 0;
 
   const badgeText = isDark ? colors.bg : colors.onPrimary;
 
@@ -374,7 +376,7 @@ export default function HomeScreen() {
                       />
                     </PressableScale>
                   ))}
-                  {owedTop.map(({ person, netMinor }) => (
+                  {owedSorted.map(({ person, netMinor }) => (
                     <PressableScale
                       key={person.id}
                       accessibilityRole="button"

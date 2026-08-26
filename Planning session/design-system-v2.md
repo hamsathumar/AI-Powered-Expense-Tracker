@@ -350,6 +350,21 @@ about to happen" without a fifth tab.
 transaction list beneath (day header + the day's net in tabular figures on the
 right); search field plus a filter button; a single `+` FAB bottom right.
 
+> **The day's net, defined (2026-08-25).** It answers a different question
+> depending on the filter, and both are in `src/domain/accountActivity.ts`:
+>
+> - **All accounts → net spending.** Only `expense` and `income` count, per the
+>   golden rule. Lending and transfers are excluded, so a day of pure movement
+>   nets to zero.
+> - **One account selected → that account's cash movement,** where transfers
+>   and lending genuinely belong.
+>
+> The all-accounts case previously used the cash figure and was wrong twice
+> over: lending rows render *unsigned*, so the total could not be derived from
+> anything on screen, and a bill split where someone else paid (a borrow +
+> expense pair) cancelled itself out — hiding the very spending the split
+> feature exists to report.
+
 **Reports:** month switcher (chevron / `August 2026` / chevron) → income and
 spending summary pair → category bars → donut card → daily spending bars
 (current day highlighted in `primary`, the rest `primarySoft`) → by-account
