@@ -30,7 +30,8 @@ import { SegmentedControl } from '@/components/SegmentedControl';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
-import { deletePendingOperation, getPendingOperation } from '@/db/queries/pendingOperations';
+import { markPendingOperationSaved } from '@/ai/commitOperation';
+import { getPendingOperation } from '@/db/queries/pendingOperations';
 import { insertTransactionsAtomically } from '@/db/queries/transactions';
 import { buildBillSplitPrefill } from '@/ai/specializedPrefill';
 import { equalSharesMinor, generateBillSplitTransactions } from '@/domain/billSplit';
@@ -177,7 +178,7 @@ export default function BillSplitScreen() {
       }
       await insertTransactionsAtomically(rows);
       // Handoff: consume the pending AI operation so it leaves the review queue.
-      if (fromPending) await deletePendingOperation(fromPending);
+      if (fromPending) await markPendingOperationSaved(fromPending);
       router.back();
     } catch (e) {
       Alert.alert('Split failed', String(e));

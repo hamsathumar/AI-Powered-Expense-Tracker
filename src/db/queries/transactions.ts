@@ -193,6 +193,9 @@ export interface TransactionListItem {
   categoryIcon: string | null;
   categoryColor: string | null;
   personName: string | null;
+  /** The account (or, for a transfer, either account) is private. */
+  accountPrivate: boolean;
+  toAccountPrivate: boolean;
 }
 
 type JoinedRow = TransactionRow & {
@@ -202,6 +205,8 @@ type JoinedRow = TransactionRow & {
   category_icon: string | null;
   category_color: string | null;
   person_name: string | null;
+  account_private: number | null;
+  to_account_private: number | null;
 };
 
 const JOINED_SELECT = `
@@ -211,7 +216,9 @@ const JOINED_SELECT = `
          c.name  AS category_name,
          c.icon  AS category_icon,
          c.color AS category_color,
-         p.name  AS person_name
+         p.name  AS person_name,
+         a.is_private  AS account_private,
+         ta.is_private AS to_account_private
   FROM transactions t
   LEFT JOIN accounts   a  ON a.id  = t.account_id
   LEFT JOIN accounts   ta ON ta.id = t.to_account_id
@@ -227,6 +234,8 @@ function toListItem(row: JoinedRow): TransactionListItem {
     categoryIcon: row.category_icon,
     categoryColor: row.category_color,
     personName: row.person_name,
+    accountPrivate: row.account_private === 1,
+    toAccountPrivate: row.to_account_private === 1,
   };
 }
 

@@ -16,16 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Amount } from '@/components/Amount';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { deleteTransaction, getTransactionItem, type TransactionListItem } from '@/db/queries/transactions';
-import type { LendingDirection } from '@/domain/types';
+import { lendingPresentation } from '@/domain/lendingPresentation';
 import { fontFamily, layout, minTouchTarget, radius, screenPaddingH, space, tabularNums, type } from '@/theme/tokens';
 import { useTheme } from '@/theme/ThemeContext';
-
-const LENDING_LABELS: Record<LendingDirection, (name: string) => string> = {
-  lend: (n) => `Lent to ${n}`,
-  lend_repayment_received: (n) => `${n} repaid you`,
-  borrow: (n) => `Borrowed from ${n}`,
-  borrow_repayment_made: (n) => `Repaid ${n}`,
-};
 
 const TYPE_ICONS: Record<'transfer' | 'lending', ComponentProps<typeof Feather>['name']> = {
   transfer: 'repeat',
@@ -36,6 +29,11 @@ const SOURCE_LABEL = { voice: 'voice', manual: 'you', recurring: 'a schedule', b
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' } as const;
 
 const bigAmount = { fontFamily: fontFamily.headingBold, fontSize: 34, lineHeight: 40, ...tabularNums };
+
+/** "Room (Private)" — a private account is named as such, never left implicit. */
+function withPrivate(name: string | null, isPrivate: boolean): string {
+  return `${name ?? '—'}${isPrivate ? ' (Private)' : ''}`;
+}
 
 export default function TransactionDetailScreen() {
   const { colors } = useTheme();
@@ -62,22 +60,24 @@ export default function TransactionDetailScreen() {
   }
 
   const { tx } = item;
-  const icon =
-    tx.type === 'expense' || tx.type === 'income'
+  const lend = tx.type === 'lending' ? lendingPresentation(tx.direction) : null;
+  const icon = lend
+    ? lend.icon
+    : tx.type === 'expense' || tx.type === 'income'
       ? ((item.categoryIcon as ComponentProps<typeof Feather>['name']) ?? 'circle')
       : TYPE_ICONS[tx.type];
-  const iconColor = item.categoryColor ?? colors[tx.type];
+  const iconColor = lend ? colors[lend.tone] : (item.categoryColor ?? colors[tx.type]);
 
   const rows: { label: string; value: string }[] = [];
   if (tx.type === 'expense' || tx.type === 'income') {
     rows.push({ label: 'Category', value: item.categoryName ?? '—' });
-    rows.push({ label: 'Account', value: item.accountName ?? '—' });
+    rows.push({ label: 'Account', value: withPrivate(item.accountName, item.accountPrivate) });
   } else if (tx.type === 'transfer') {
-    rows.push({ label: 'From', value: item.accountName ?? '—' });
-    rows.push({ label: 'To', value: item.toAccountName ?? '—' });
+    rows.push({ label: 'From', value: withPrivate(item.accountName, item.accountPrivate) });
+    rows.push({ label: 'To', value: withPrivate(item.toAccountName, item.toAccountPrivate) });
   } else {
-    rows.push({ label: 'Account', value: item.accountName ?? '—' });
-    rows.push({ label: 'Direction', value: LENDING_LABELS[tx.direction](item.personName ?? '—') });
+    rows.push({ label: 'Account', value: withPrivate(item.accountName, item.accountPrivate) });
+    rows.push({ label: 'Direction', value: lendingPresentation(tx.direction).label(item.personName ?? '—') });
   }
   rows.push({ label: 'When', value: format(new Date(tx.occurredAt), 'd MMM yyyy · HH:mm') });
   if ((tx.type === 'expense' || tx.type === 'income') && item.personName) {
@@ -117,7 +117,12 @@ export default function TransactionDetailScreen() {
           <View style={[styles.tile, { backgroundColor: `${iconColor}22` }]}>
             <Feather name={icon} size={26} color={iconColor} />
           </View>
-          <Amount valueMinor={tx.amountMinor} txType={tx.type} textStyle={bigAmount} />
+          <Amount
+            valueMinor={tx.amountMinor}
+            txType={tx.type}
+            direction={tx.type === 'lending' ? tx.direction : undefined}
+            textStyle={bigAmount}
+          />
           <Text style={[type.h2, { color: colors.text }]}>{tx.name}</Text>
           <View style={[styles.provenance, { backgroundColor: colors.surfaceAlt }]}>
             <Feather name={tx.source === 'voice' ? 'mic' : 'edit-3'} size={13} color={colors.primary} />

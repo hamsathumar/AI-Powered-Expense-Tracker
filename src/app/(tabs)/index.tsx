@@ -395,7 +395,7 @@ export default function HomeScreen() {
                         </Text>
                         <Text style={[type.caption, { color: colors.textMuted }]}>Tap to settle up</Text>
                       </View>
-                      <Text style={[type.amount, smallAmount, { color: colors.lending }]}>
+                      <Text style={[type.amount, smallAmount, { color: colors.lent }]}>
                         Owes you {formatAmount(netMinor, symbol)}
                       </Text>
                     </PressableScale>

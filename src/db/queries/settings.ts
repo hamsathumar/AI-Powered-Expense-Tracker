@@ -33,6 +33,7 @@ export const SETTINGS_KEYS = {
   appearance: 'appearance',
   haptics: 'haptics',
   motion: 'motion',
+  peopleSort: 'people_sort',
 } as const;
 
 /** Theme preference: follow the system, or force light/dark (v2 §5.10). */

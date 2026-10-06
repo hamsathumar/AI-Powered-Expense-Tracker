@@ -12,6 +12,7 @@ interface AccountRow {
   icon: string | null;
   color: string | null;
   archived: number;
+  is_private: number;
   created_at: string;
 }
 
@@ -25,6 +26,7 @@ function fromRow(row: AccountRow): Account {
     icon: row.icon ?? undefined,
     color: row.color ?? undefined,
     archived: row.archived === 1,
+    isPrivate: row.is_private === 1,
     createdAt: row.created_at,
   };
 }
@@ -36,6 +38,7 @@ export interface NewAccount {
   openingBalanceMinor?: number;
   icon?: string;
   color?: string;
+  isPrivate?: boolean;
 }
 
 export async function createAccount(input: NewAccount): Promise<Account> {
@@ -43,8 +46,8 @@ export async function createAccount(input: NewAccount): Promise<Account> {
   const id = Crypto.randomUUID();
   const createdAt = new Date().toISOString();
   await db.runAsync(
-    `INSERT INTO accounts (id, name, type, owner_label, opening_balance, icon, color, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO accounts (id, name, type, owner_label, opening_balance, icon, color, is_private, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.name,
     input.type,
@@ -52,6 +55,7 @@ export async function createAccount(input: NewAccount): Promise<Account> {
     input.openingBalanceMinor ?? 0,
     input.icon ?? null,
     input.color ?? null,
+    input.isPrivate ? 1 : 0,
     createdAt,
   );
   return {
@@ -63,6 +67,7 @@ export async function createAccount(input: NewAccount): Promise<Account> {
     icon: input.icon,
     color: input.color,
     archived: false,
+    isPrivate: input.isPrivate ?? false,
     createdAt,
   };
 }
@@ -75,16 +80,40 @@ export async function getAccount(id: string): Promise<Account | null> {
 
 export async function updateAccount(
   id: string,
-  changes: Pick<NewAccount, 'name' | 'type' | 'openingBalanceMinor'>,
+  changes: Pick<NewAccount, 'name' | 'type' | 'openingBalanceMinor' | 'isPrivate'>,
 ): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'UPDATE accounts SET name = ?, type = ?, opening_balance = ? WHERE id = ?',
+    'UPDATE accounts SET name = ?, type = ?, opening_balance = ?, is_private = ? WHERE id = ?',
     changes.name,
     changes.type,
     changes.openingBalanceMinor ?? 0,
+    changes.isPrivate ? 1 : 0,
     id,
   );
+}
+
+/**
+ * How many live (pending or approved) transactions touch this account. Used to
+ * warn before an opening-balance edit, which shifts every balance derived from it.
+ */
+export async function countAccountTransactions(accountId: string): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM transactions
+     WHERE status != 'rejected' AND (account_id = ? OR to_account_id = ?)`,
+    accountId,
+    accountId,
+  );
+  return row?.n ?? 0;
+}
+
+/** Ids of every private account, archived ones included — an archived
+ *  private account's history must stay private too. */
+export async function listPrivateAccountIds(): Promise<Set<string>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string }>('SELECT id FROM accounts WHERE is_private = 1');
+  return new Set(rows.map((r) => r.id));
 }
 
 /** Soft delete — history stays intact; archived accounts leave all lists. */
@@ -135,8 +164,13 @@ export async function getAccountBalanceMinor(accountId: string): Promise<number>
   return row.balance;
 }
 
-/** Balances for all non-archived accounts in one query. */
-export async function listAccountBalancesMinor(): Promise<Map<string, number>> {
+/**
+ * Balances for all non-archived accounts in one query. `personalOnly` leaves
+ * private accounts out — what the Home / Reports total balance means.
+ */
+export async function listAccountBalancesMinor(
+  { personalOnly = false }: { personalOnly?: boolean } = {},
+): Promise<Map<string, number>> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ id: string; balance: number }>(
     `SELECT a.id, a.opening_balance + COALESCE(SUM(${BALANCE_CASE_SQL}), 0) AS balance
@@ -144,7 +178,7 @@ export async function listAccountBalancesMinor(): Promise<Map<string, number>> {
      LEFT JOIN transactions t
        ON t.status = 'approved'
       AND (t.account_id = a.id OR t.to_account_id = a.id)
-     WHERE a.archived = 0
+     WHERE a.archived = 0${personalOnly ? ' AND a.is_private = 0' : ''}
      GROUP BY a.id`,
   );
   return new Map(rows.map((r) => [r.id, r.balance]));

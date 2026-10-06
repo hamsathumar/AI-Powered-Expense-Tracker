@@ -57,7 +57,7 @@ async function loadContext(): Promise<{ resolve: ResolveContext; prompt: Interpr
     listAccounts(),
     listCategories('expense'),
     listCategories('income'),
-    listPeople(),
+    listPeople('name'),
     getCurrencyCode(),
   ]);
   const lite = <T extends { id: string; name: string }>(xs: T[]) => xs.map((x) => ({ id: x.id, name: x.name }));

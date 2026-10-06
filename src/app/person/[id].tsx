@@ -6,11 +6,12 @@
  */
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Alert, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { describeNet, initials } from '@/components/PersonRow';
+import { StatementExportSheet } from '@/components/StatementExportSheet';
 import { TransactionRow } from '@/components/TransactionRow';
 import {
   countTransactionsForPerson,
@@ -24,7 +25,11 @@ import {
   listTransactionItemsForPerson,
   type TransactionListItem,
 } from '@/db/queries/transactions';
+import { netTone } from '@/domain/lendingPresentation';
+import { buildPersonStatement, statementDayTitle } from '@/domain/personStatement';
 import type { Person } from '@/domain/types';
+import { sharePersonStatementPdf } from '@/services/personStatementPdf';
+import { useCurrency } from '@/theme/CurrencyContext';
 import { useTheme } from '@/theme/ThemeContext';
 import { minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
 
@@ -37,6 +42,8 @@ export default function PersonDetailScreen() {
   const [netMinor, setNetMinor] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
   const [history, setHistory] = useState<TransactionListItem[]>([]);
+  const [exportOpen, setExportOpen] = useState(false);
+  const { symbol } = useCurrency();
 
   const reload = useCallback(() => {
     Promise.all([
@@ -59,6 +66,18 @@ export default function PersonDetailScreen() {
   }, [id, router]);
 
   useFocusEffect(reload);
+
+  // Days newest-first, each closing with the running balance after that day.
+  const sections = useMemo(
+    () =>
+      buildPersonStatement(history, id).days.map((day) => ({
+        key: day.dayKey,
+        title: statementDayTitle(day.date),
+        closingBalanceMinor: day.closingBalanceMinor,
+        data: day.entries,
+      })),
+    [history, id],
+  );
 
   const rename = () => {
     if (!person) return;
@@ -94,10 +113,22 @@ export default function PersonDetailScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-      <FlatList
-        data={history}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.tx.id}
         contentContainerStyle={styles.list}
+        stickySectionHeadersEnabled={false}
+        renderSectionHeader={({ section }) => {
+          const tone = netTone(section.closingBalanceMinor);
+          return (
+            <View style={styles.dayHeader}>
+              <Text style={[type.sectionLabel, { color: colors.textSubtle }]}>{section.title}</Text>
+              <Text style={[type.label, { color: tone ? colors[tone] : colors.textMuted }]}>
+                Balance · {describeNet(section.closingBalanceMinor)}
+              </Text>
+            </View>
+          );
+        }}
         renderItem={({ item }) => <TransactionRow item={item} />}
         ListHeaderComponent={
           <View style={styles.header}>
@@ -112,7 +143,7 @@ export default function PersonDetailScreen() {
                 <Text
                   style={[
                     type.h2,
-                    { color: netMinor === 0 ? colors.textMuted : colors.lending },
+                    { color: netTone(netMinor) ? colors[netTone(netMinor)!] : colors.textMuted },
                   ]}>
                   {describeNet(netMinor)}
                 </Text>
@@ -143,18 +174,39 @@ export default function PersonDetailScreen() {
               </View>
             ) : null}
 
-            {netMinor !== 0 ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  router.push({ pathname: '/settle-up', params: { personId: person.id } })
-                }
-                style={({ pressed }) => [
-                  styles.settleButton,
-                  { backgroundColor: pressed ? colors.primaryPress : colors.primary },
-                ]}>
-                <Text style={[type.h2, { color: colors.onPrimary }]}>Settle up</Text>
-              </Pressable>
+            {netMinor !== 0 || history.length > 0 ? (
+              <View style={styles.actions}>
+                {netMinor !== 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() =>
+                      router.push({ pathname: '/settle-up', params: { personId: person.id } })
+                    }
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      { backgroundColor: pressed ? colors.primaryPress : colors.primary },
+                    ]}>
+                    <Text style={[type.h2, { color: colors.onPrimary }]}>Settle up</Text>
+                  </Pressable>
+                ) : null}
+                {history.length > 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Export a PDF statement with ${person.name}`}
+                    onPress={() => setExportOpen(true)}
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      styles.exportButton,
+                      {
+                        borderColor: colors.primary,
+                        backgroundColor: pressed ? colors.primarySoft : colors.surface,
+                      },
+                    ]}>
+                    <Feather name="file-text" size={18} color={colors.primary} />
+                    <Text style={[type.h2, { color: colors.primary }]}>Export PDF</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             ) : null}
 
             {history.length > 0 ? (
@@ -167,6 +219,13 @@ export default function PersonDetailScreen() {
             No transactions with {person.name} yet.
           </Text>
         }
+      />
+
+      <StatementExportSheet
+        visible={exportOpen}
+        personName={person.name}
+        onClose={() => setExportOpen(false)}
+        onExport={(range) => sharePersonStatementPdf(person, range, symbol)}
       />
     </SafeAreaView>
   );
@@ -200,6 +259,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  dayHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingTop: space.md,
+  },
   hint: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -208,12 +273,15 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   hintText: { flex: 1 },
-  settleButton: {
+  actions: { flexDirection: 'row', gap: space.sm },
+  actionButton: {
+    flex: 1,
     minHeight: minTouchTarget + space.sm,
     borderRadius: radius.lg,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  exportButton: { flexDirection: 'row', gap: space.sm, borderWidth: 1 },
   emptyText: {
     textAlign: 'center',
     paddingTop: space.xl,

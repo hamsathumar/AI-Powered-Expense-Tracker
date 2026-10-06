@@ -16,17 +16,10 @@ import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 
 import { Amount } from '@/components/Amount';
 import type { TransactionListItem } from '@/db/queries/transactions';
-import type { LendingDirection } from '@/domain/types';
+import { lendingPresentation } from '@/domain/lendingPresentation';
 import { useReduceMotion } from '@/theme/FeedbackContext';
 import { useTheme } from '@/theme/ThemeContext';
 import { layout, minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
-
-const LENDING_LABELS: Record<LendingDirection, (name: string) => string> = {
-  lend: (n) => `Lent to ${n}`,
-  lend_repayment_received: (n) => `${n} repaid you`,
-  borrow: (n) => `Borrowed from ${n}`,
-  borrow_repayment_made: (n) => `Repaid ${n}`,
-};
 
 interface Props {
   item: TransactionListItem | null;
@@ -55,7 +48,7 @@ export function TransactionPeek({ item, onClose, onOpenDetail }: Props) {
     rows.push({
       icon: 'users',
       label: 'Person',
-      value: LENDING_LABELS[tx.direction](item.personName ?? '—'),
+      value: lendingPresentation(tx.direction).label(item.personName ?? '—'),
     });
   }
   if (tx.status === 'pending') {
@@ -75,7 +68,12 @@ export function TransactionPeek({ item, onClose, onOpenDetail }: Props) {
               <Text numberOfLines={2} style={[type.h2, { color: colors.text }]}>
                 {tx.name}
               </Text>
-              <Amount valueMinor={tx.amountMinor} txType={tx.type} textStyle={type.display} />
+              <Amount
+                valueMinor={tx.amountMinor}
+                txType={tx.type}
+                direction={tx.type === 'lending' ? tx.direction : undefined}
+                textStyle={type.display}
+              />
             </Animated.View>
 
             <View style={[styles.divider, { backgroundColor: colors.border }]} />

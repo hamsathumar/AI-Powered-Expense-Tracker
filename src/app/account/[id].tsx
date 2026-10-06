@@ -4,7 +4,12 @@ import { Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AccountForm } from '@/components/AccountForm';
-import { archiveAccount, getAccount, updateAccount } from '@/db/queries/accounts';
+import {
+  archiveAccount,
+  countAccountTransactions,
+  getAccount,
+  updateAccount,
+} from '@/db/queries/accounts';
 import type { Account } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
 
@@ -13,12 +18,14 @@ export default function EditAccountScreen() {
   const { colors } = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [account, setAccount] = useState<Account | null>(null);
+  const [hasHistory, setHasHistory] = useState(false);
 
   useEffect(() => {
      
-    getAccount(id)
-      .then((a) => {
+    Promise.all([getAccount(id), countAccountTransactions(id)])
+      .then(([a, count]) => {
         if (!a) throw new Error('Account not found');
+        setHasHistory(count > 0);
         setAccount(a);
       })
       .catch((e) => {
@@ -33,6 +40,7 @@ export default function EditAccountScreen() {
         <AccountForm
           title="Edit account"
           initial={account}
+          hasHistory={hasHistory}
           onSubmit={async (values) => {
             await updateAccount(account.id, values);
             router.back();

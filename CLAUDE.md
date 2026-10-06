@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 @AGENTS.md
 
 # Kaasu — Personal Expense Tracker
@@ -6,6 +10,49 @@ Private, single-user, **voice-first** expense tracker for iOS. Personal use
 only — never published to app stores. The owner is learning mobile development
 through this project (background: web React/Node): briefly explain new React
 Native/Expo concepts as they appear; don't re-explain web React concepts.
+
+## Commands
+
+```bash
+npm start                      # Metro + hot reload (daily work)
+npx expo run:ios --device      # build/install dev build; also re-signs weekly
+npx expo prebuild              # REQUIRED after app.json / native-plugin changes (run:ios skips it)
+npm run lint                   # expo lint (ESLint 9, eslint-config-expo)
+npx tsc --noEmit               # typecheck
+npm test                       # jest (ts-jest, node env, src/**/*.test.ts only)
+npx jest src/domain/money      # single test file (path pattern)
+npx jest -t "rounding"         # single test by name
+GEMINI_API_KEY=... npx jest liveEval   # live model eval (skipped without key)
+```
+
+Tests run in plain node — no React Native runtime — so logic worth testing
+must live in pure modules (`src/domain/`, `src/ai/interpretation/`,
+`db/queries/*Sql.ts`). `@/` aliases `src/`. `android/` and `ios/` are
+generated native projects.
+
+## Architecture
+
+- **Layering:** `src/domain/` (pure money/business logic + types, no I/O) →
+  `src/db/queries/` (typed SQLite access; `getDb()` in `db/client.ts` is a
+  memoized singleton that runs migrations on open) → screens/components in
+  `src/app/` (expo-router file routes; tabs in `(tabs)/`) and `src/components/`.
+- **Migrations** (`db/migrations.ts`): ordered list keyed by
+  `PRAGMA user_version`, each applied in one transaction. Never edit a shipped
+  migration — append a new one.
+- **Voice/AI pipeline** (`src/ai/`): audio → Gemini (`geminiInterpret.ts`,
+  schema in `interpretSchema.ts`, prompt in `interpretPrompt.ts`) → raw
+  interpretation → deterministic `interpretation/` stages (`validate`,
+  `resolve` entity references, `dates`, `naming`, `injection`) → queued as
+  `pending_operations` → `gate.ts` `evaluateApproval` (the single
+  authoritative pre-commit check, used by single, bulk and "approve now") →
+  `commitOperation.ts` writes transactions (always `pending`). The model never
+  writes to the DB; everything it says is re-grounded against the transcript
+  and existing entities. Parse requests run through a durable job queue
+  (`voiceJobRunner.ts`, `voice_jobs` table, `state/VoiceJobs.tsx`) so they
+  survive backgrounding.
+- **Provider stack** in `src/app/_layout.tsx` wires theme, feedback
+  (haptics/motion), pending-count and voice-job contexts, and
+  `GestureHandlerRootView`.
 
 ## Source of truth
 
@@ -45,6 +92,17 @@ Only `expense` and `income` count toward spending/earning reports. `transfer`
 and `lending` are pure money movements: they affect account balances (lending
 also affects person balances) but must NEVER appear in spending/income reports
 or category breakdowns.
+
+**Private accounts** (migration 8, `accounts.is_private`) are the one
+deliberate extension: a private account's own expense/income never reaches
+personal reports or Home totals, and a transfer that CROSSES the boundary is
+re-typed — personal → private counts as an expense ("Moved to private"),
+private → personal as income ("Back from private"). Transfers within one side
+and all lending still never count. It lives in ONE place,
+`reportSql.reportRowsSql` (every report builder reads from it), mirrored for
+the Accounts day header by `dayNetMinor(..., privateAccountIds)`. Picking a
+private account in the Reports filter shows its own report. Person balances
+still include lending done through a private account.
 
 ## Non-negotiable conventions
 
@@ -187,7 +245,33 @@ or category breakdowns.
   corpus case whenever something reads wrong. Production deliberately stays a
   single audio→JSON call; only a text entry point was added.
 
+- **People & lending pass (2026-10-06):** negative opening balances (sign is a
+  separate +/− control — the decimal pad has no minus; editing an opening
+  balance on an account with history asks first). One shared lending mapping,
+  `domain/lendingPresentation.ts` — `lent` (plum) / `borrowed` (orange) tones,
+  a distinct icon per direction, and a sign that means **effect on what the
+  person owes you** (lend +, repaid-to-you −, borrow −, repaid-by-you +) — used
+  by `<Amount direction>` and every lending row. Person screen grouped by day
+  with an end-of-day running balance (`domain/personStatement.ts`, shared with
+  the PDF). People reorder by hold-and-drag (`components/SortableList.tsx`,
+  migration 7 `people.sort_order`; Manual / A–Z / Owed, manual order also
+  drives pickers; voice resolution uses `listPeople('name')`). PDF statement
+  export on the person profile (`expo-print`, `domain/personStatementHtml.ts`,
+  presets in `domain/statementPeriod.ts`). **Needs `npx expo prebuild` +
+  `npx expo run:ios --device`** — `expo-print` is a new native module.
+- **Voice "Logged" cards stay in sync (2026-10-06):** pending AI operations are
+  deleted on both approve and reject, so `state/pendingOutcomes.ts` records
+  what happened to each one; every consumer (Approve now, review screen, Home
+  queue, bulk approve, bill-split/recurring editors) goes through
+  `commitPendingOperation` / `rejectPendingOperation` /
+  `markPendingOperationSaved`. Never delete a pending operation directly.
+- **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
+  the account form (confirmed when the account has history); lock + "Private"
+  label on account cards, rows, detail, PDF; CSV gains a `Private` column;
+  Home/Reports total balance is personal-only; Recurring forecast skips
+  private templates.
+
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 400 tests, plus 16 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 484 tests, plus 16 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

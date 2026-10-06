@@ -42,7 +42,11 @@ import { SwipeableRow } from '@/components/SwipeableRow';
 import { TransactionFilterSheet } from '@/components/TransactionFilterSheet';
 import { TransactionPeek } from '@/components/TransactionPeek';
 import { TransactionRow } from '@/components/TransactionRow';
-import { listAccountBalancesMinor, listAccounts } from '@/db/queries/accounts';
+import {
+  listAccountBalancesMinor,
+  listAccounts,
+  listPrivateAccountIds,
+} from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { listPeople } from '@/db/queries/people';
 import {
@@ -94,6 +98,7 @@ export default function AccountsScreen() {
   const [balances, setBalances] = useState<Map<string, number>>(new Map());
   const [categories, setCategories] = useState<Category[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [privateIds, setPrivateIds] = useState<Set<string>>(new Set());
   const [transactions, setTransactions] = useState<TransactionListItem[]>([]);
 
   const [filter, setFilter] = useState<TransactionFilter>({});
@@ -115,8 +120,10 @@ export default function AccountsScreen() {
       listCategories('expense'),
       listCategories('income'),
       listPeople(),
+      listPrivateAccountIds(),
     ])
-      .then(([acc, bal, expenseCats, incomeCats, ppl]) => {
+      .then(([acc, bal, expenseCats, incomeCats, ppl, priv]) => {
+        setPrivateIds(priv);
         setAccounts(acc);
         setBalances(bal);
         setCategories([...expenseCats, ...incomeCats]);
@@ -224,10 +231,13 @@ export default function AccountsScreen() {
     return [...byDay.entries()].map(([key, data]) => ({
       key,
       title: dayTitle(data[0]!.tx.occurredAt),
-      netMinor: data.reduce((sum, i) => sum + dayNetMinor(i.tx, filter.accountId ?? undefined), 0),
+      netMinor: data.reduce(
+        (sum, i) => sum + dayNetMinor(i.tx, filter.accountId ?? undefined, privateIds),
+        0,
+      ),
       data,
     }));
-  }, [transactions, filter.accountId]);
+  }, [transactions, filter.accountId, privateIds]);
 
   const header = (
     <View style={styles.headerBlock}>

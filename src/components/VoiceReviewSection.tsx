@@ -19,10 +19,11 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   commitPendingOperation,
   evaluateAllPending,
+  rejectPendingOperation,
   type EvaluatedPending,
 } from '@/ai/commitOperation';
 import { Amount } from '@/components/Amount';
-import { deletePendingOperation } from '@/db/queries/pendingOperations';
+import { subscribePendingOutcomes } from '@/state/pendingOutcomes';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, layout, minTouchTarget, radius, space, type } from '@/theme/tokens';
 
@@ -74,6 +75,9 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
       .catch((e) => Alert.alert('Review error', String(e)));
   }, []);
   useFocusEffect(reload);
+  // Approved/rejected somewhere else while this list is mounted (e.g. the
+  // voice screen on top of Home) → drop it from view straight away.
+  useEffect(() => subscribePendingOutcomes(reload), [reload]);
 
   // Keep Home's shared badge / empty-state in sync (effect, not during render).
   useEffect(
@@ -132,7 +136,7 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
   };
 
   const reject = (item: EvaluatedPending) => {
-    deletePendingOperation(item.id).then(reload);
+    rejectPendingOperation(item.id).then(reload);
   };
 
   if (items.length === 0) return null;
@@ -159,7 +163,11 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
                         Amount needed
                       </Text>
                     ) : (
-                      <Amount valueMinor={item.op.amountMinor} txType={item.op.operation} />
+                      <Amount
+                        valueMinor={item.op.amountMinor}
+                        txType={item.op.operation}
+                        direction={item.op.direction}
+                      />
                     )}
                   </View>
                   <Text numberOfLines={1} style={[type.caption, { color: colors.textMuted }]}>

@@ -7,7 +7,7 @@
  *
  * Transfer rows show "Account A → Account B"; lending rows show the person
  * and direction in words. Pending rows get an amber left edge + label —
- * never colour alone.
+ * never colour alone. Rows on a private account carry a lock + "Private".
  */
 import { Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
@@ -16,16 +16,9 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Amount } from '@/components/Amount';
 import type { TransactionListItem } from '@/db/queries/transactions';
-import type { LendingDirection } from '@/domain/types';
+import { lendingPresentation } from '@/domain/lendingPresentation';
 import { useTheme } from '@/theme/ThemeContext';
 import { radius, space, type } from '@/theme/tokens';
-
-const LENDING_LABELS: Record<LendingDirection, (name: string) => string> = {
-  lend: (n) => `Lent to ${n}`,
-  lend_repayment_received: (n) => `${n} repaid you`,
-  borrow: (n) => `Borrowed from ${n}`,
-  borrow_repayment_made: (n) => `Repaid ${n}`,
-};
 
 const TYPE_ICONS: Record<string, ComponentProps<typeof Feather>['name']> = {
   transfer: 'repeat',
@@ -36,11 +29,13 @@ export function TransactionRow({ item }: { item: TransactionListItem }) {
   const { colors } = useTheme();
   const { tx } = item;
 
-  const icon =
-    tx.type === 'expense' || tx.type === 'income'
+  const lend = tx.type === 'lending' ? lendingPresentation(tx.direction) : null;
+  const icon = lend
+    ? lend.icon
+    : tx.type === 'expense' || tx.type === 'income'
       ? ((item.categoryIcon as ComponentProps<typeof Feather>['name']) ?? 'circle')
       : TYPE_ICONS[tx.type];
-  const iconColor = item.categoryColor ?? colors[tx.type];
+  const iconColor = lend ? colors[lend.tone] : (item.categoryColor ?? colors[tx.type]);
 
   let subtitle: string;
   switch (tx.type) {
@@ -52,11 +47,12 @@ export function TransactionRow({ item }: { item: TransactionListItem }) {
       subtitle = `${item.accountName ?? '—'} → ${item.toAccountName ?? '—'}`;
       break;
     case 'lending':
-      subtitle = LENDING_LABELS[tx.direction](item.personName ?? '—');
+      subtitle = lendingPresentation(tx.direction).label(item.personName ?? '—');
       break;
   }
   const time = format(new Date(tx.occurredAt), 'HH:mm');
   const pending = tx.status === 'pending';
+  const isPrivate = item.accountPrivate || item.toAccountPrivate;
 
   return (
     <View
@@ -72,12 +68,20 @@ export function TransactionRow({ item }: { item: TransactionListItem }) {
         <Text numberOfLines={1} style={[type.body, { color: colors.text }]}>
           {tx.name}
         </Text>
-        <Text numberOfLines={1} style={[type.caption, { color: colors.textMuted }]}>
-          {subtitle} · {time}
-          {pending ? ' · Pending' : ''}
-        </Text>
+        <View style={styles.metaRow}>
+          {isPrivate ? <Feather name="lock" size={11} color={colors.textMuted} /> : null}
+          <Text numberOfLines={1} style={[type.caption, styles.metaText, { color: colors.textMuted }]}>
+            {isPrivate ? 'Private · ' : ''}
+            {subtitle} · {time}
+            {pending ? ' · Pending' : ''}
+          </Text>
+        </View>
       </View>
-      <Amount valueMinor={tx.amountMinor} txType={tx.type} />
+      <Amount
+        valueMinor={tx.amountMinor}
+        txType={tx.type}
+        direction={tx.type === 'lending' ? tx.direction : undefined}
+      />
     </View>
   );
 }
@@ -101,4 +105,6 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  metaText: { flexShrink: 1 },
 });

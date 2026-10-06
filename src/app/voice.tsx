@@ -25,7 +25,7 @@
  * walks away, the result lands in the queue and a local notification says so.
  */
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
@@ -42,6 +42,11 @@ import { hapticError, hapticStart, hapticStop, hapticSuccess } from '@/lib/hapti
 import { playChime, playStart, playWhoosh, primeSoundSession } from '@/lib/soundFx';
 import { ensureNotificationPermission } from '@/lib/notifications';
 import { usePendingCount } from '@/state/PendingCount';
+import {
+  reconcileConfirmCards,
+  subscribePendingOutcomes,
+  type ConfirmCardState,
+} from '@/state/pendingOutcomes';
 import { useVoiceJob, useVoiceJobs } from '@/state/VoiceJobs';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, radius, screenPaddingH, space, type } from '@/theme/tokens';
@@ -72,7 +77,14 @@ export default function VoiceScreen() {
   const reduceMotion = useReducedMotion();
 
   const [phase, setPhase] = useState<Phase>('ready');
-  const [confirmItems, setConfirmItems] = useState<EvaluatedPending[]>([]);
+  // The cards are NOT a one-time snapshot: the same pending items can be
+  // approved, rejected or edited on the review screen (or the Home queue), so
+  // the ids are kept and re-read on every focus / outcome event. `lastKnown`
+  // keeps each card's content after its pending row is gone, so a resolved
+  // card can still say what it was ("Approved · counting now").
+  const [confirmIds, setConfirmIds] = useState<string[]>([]);
+  const [cards, setCards] = useState<ConfirmCardState<EvaluatedPending>[]>([]);
+  const lastKnownRef = useRef(new Map<string, EvaluatedPending>());
   const [capturedTranscript, setCapturedTranscript] = useState('');
   const [retryUri, setRetryUri] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -101,6 +113,33 @@ export default function VoiceScreen() {
     [],
   );
 
+  // ---- Keep the cards in step with the pending store -----------------------
+  const reloadCards = useCallback(async (ids: string[]) => {
+    let live: EvaluatedPending[] = [];
+    try {
+      live = await evaluatePendingByIds(ids);
+    } catch {
+      live = [];
+    }
+    if (!mountedRef.current) return;
+    for (const item of live) lastKnownRef.current.set(item.id, item);
+    setCards(
+      reconcileConfirmCards(ids, new Map(live.map((i) => [i.id, i])), lastKnownRef.current),
+    );
+  }, []);
+
+  // Back from the review screen / an editor → show what actually happened there.
+  useFocusEffect(
+    useCallback(() => {
+      if (confirmIds.length > 0) void reloadCards(confirmIds);
+    }, [confirmIds, reloadCards]),
+  );
+  // Resolved anywhere while this screen is showing (Approve now included).
+  useEffect(() => {
+    if (confirmIds.length === 0) return;
+    return subscribePendingOutcomes(() => void reloadCards(confirmIds));
+  }, [confirmIds, reloadCards]);
+
   // ---- Watch the durable job (TC-027) --------------------------------------
   // The runner does the work; the screen only reflects the job's final state.
   // If the user leaves mid-parse the job still finishes and notifies.
@@ -113,21 +152,17 @@ export default function VoiceScreen() {
         hapticError();
         return;
       }
-      let items: EvaluatedPending[] = [];
-      try {
-        items = await evaluatePendingByIds(finished.pendingIds);
-      } catch {
-        items = [];
-      }
+      lastKnownRef.current = new Map();
+      setConfirmIds(finished.pendingIds);
+      await reloadCards(finished.pendingIds);
       if (!mountedRef.current) return;
-      setConfirmItems(items);
       setRetryUri(null);
       setPhase('success');
       playChime();
       hapticSuccess();
       refresh();
     },
-    [refresh],
+    [refresh, reloadCards],
   );
 
   useEffect(() => {
@@ -224,7 +259,8 @@ export default function VoiceScreen() {
     playStart();
     setJobId(null);
     shownJobRef.current = null;
-    setConfirmItems([]);
+    setConfirmIds([]);
+    setCards([]);
     setCapturedTranscript('');
     listenStartRef.current = Date.now();
     setElapsedMs(0);
@@ -252,7 +288,8 @@ export default function VoiceScreen() {
   const sayAnother = () => {
     setJobId(null);
     shownJobRef.current = null;
-    setConfirmItems([]);
+    setConfirmIds([]);
+    setCards([]);
     setCapturedTranscript('');
     setPhase('ready');
   };
@@ -270,7 +307,7 @@ export default function VoiceScreen() {
   // ---- Success — per-transaction confirm cards (design: logged state) ------
   if (phase === 'success' && job) {
     const shownTranscript = job.resultTranscript || job.transcript;
-    const total = confirmItems.length;
+    const total = cards.length;
     const nothing = total === 0;
     const heading = nothing ? 'Nothing logged' : total > 1 ? `${total} logged` : 'Logged';
 
@@ -302,10 +339,11 @@ export default function VoiceScreen() {
               Kaasu heard nothing it could record. Try again — say the amount and what it was for.
             </Text>
           ) : (
-            confirmItems.map((item, i) => (
+            cards.map((card, i) => (
               <ConfirmCard
-                key={item.id}
-                item={item}
+                key={card.id}
+                item={card.item}
+                resolved={card.state === 'pending' ? null : card.state}
                 baseDelay={i * 140}
                 reduceMotion={reduceMotion}
                 onApproved={refresh}

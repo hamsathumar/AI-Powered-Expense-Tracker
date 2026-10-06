@@ -17,6 +17,7 @@ import { PressableScale } from '@/components/PressableScale';
 import { RecurringListRow } from '@/components/recurring/RecurringListRow';
 import { RecurringSummaryCard } from '@/components/recurring/RecurringSummaryCard';
 import { type GroupSegment } from '@/components/recurring/RecurringGroupBar';
+import { listPrivateAccountIds } from '@/db/queries/accounts';
 import {
   getApprovedAggregates,
   getLastApprovedDates,
@@ -60,6 +61,13 @@ export default function RecurringScreen() {
   const [approved, setApproved] = useState<Record<string, ApprovedAggregate>>({});
   const [lastApprovedDates, setLastApprovedDates] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<Tab>('expenses');
+  // Templates on a private account stay listed but never enter the personal
+  // forecast totals (same rule as Reports).
+  const [privateIds, setPrivateIds] = useState<Set<string>>(new Set());
+  const counts = useCallback(
+    (t: { accountId?: string }) => !(t.accountId && privateIds.has(t.accountId)),
+    [privateIds],
+  );
 
   const reload = useCallback(() => {
     Promise.all([
@@ -67,8 +75,10 @@ export default function RecurringScreen() {
       getLastPaymentAmounts(),
       getApprovedAggregates(),
       getLastApprovedDates(),
+      listPrivateAccountIds(),
     ])
-      .then(([templateItems, last, agg, approvedDates]) => {
+      .then(([templateItems, last, agg, approvedDates, priv]) => {
+        setPrivateIds(priv);
         setItems(templateItems);
         setLastPayments(last);
         setApproved(agg);
@@ -86,12 +96,12 @@ export default function RecurringScreen() {
     let inc = 0;
     let exp = 0;
     for (const { template: t } of items) {
-      if (t.status !== 'active') continue;
+      if (t.status !== 'active' || !counts(t)) continue;
       if (t.type === 'income') inc += monthlyAmountMinor(t);
       else if (t.type === 'expense') exp += monthlyAmountMinor(t);
     }
     return { monthlyIncomeAll: inc, monthlyExpenseAll: exp };
-  }, [items]);
+  }, [items, counts]);
 
   // Templates shown under the current tab: Income tab = income; Expenses tab =
   // everything else (expense plus any transfer/lending templates, which stay
@@ -121,21 +131,21 @@ export default function RecurringScreen() {
     let sum = 0;
     for (const item of activeItems) {
       const t = item.template;
-      if (t.type !== moneyType) continue;
+      if (t.type !== moneyType || !counts(t)) continue;
       const days = differenceInCalendarDays(parseISO(t.nextDueDate), parseISO(today));
       if (days >= 0 && days <= 7) sum += shownAmount(item, lastPayments);
     }
     return sum;
-  }, [activeItems, moneyType, today, lastPayments]);
+  }, [activeItems, moneyType, today, lastPayments, counts]);
 
   const segments: GroupSegment[] = useMemo(() => {
     const totals = new Map<RecurringGroup, number>();
     for (const { template: t } of activeItems) {
-      if (t.type !== 'expense') continue;
+      if (t.type !== 'expense' || !counts(t)) continue;
       totals.set(t.recurringGroup, (totals.get(t.recurringGroup) ?? 0) + monthlyAmountMinor(t));
     }
     return GROUP_ORDER.map((g) => ({ group: g, monthlyMinor: totals.get(g) ?? 0 }));
-  }, [activeItems]);
+  }, [activeItems, counts]);
 
   const sections: DueSection[] = useMemo(() => {
     const byDate = new Map<string, RecurringListItem[]>();

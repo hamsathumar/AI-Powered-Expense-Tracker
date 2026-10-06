@@ -246,6 +246,36 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // ── v7 — people have a user-chosen order ──
+    // `sort_order` is the position in the manual order on the People screen
+    // (and in every person picker). Existing people keep today's look: they
+    // are numbered by name, so nothing visibly moves until the user drags.
+    // New people are appended after the last one (see insertPersonSql).
+    version: 7,
+    up: async (db) => {
+      await db.execAsync(`
+        ALTER TABLE people ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+        UPDATE people SET sort_order = (
+          SELECT COUNT(*) FROM people p2
+          WHERE p2.name < people.name OR (p2.name = people.name AND p2.id < people.id)
+        );
+      `);
+    },
+  },
+  {
+    // ── v8 — private accounts ──
+    // A private account (e.g. a shared "Room" pot) keeps its own ledger and
+    // balance but stays out of the user's personal finances: Reports, Home
+    // totals and spending exclude it (see reportSql.reportRowsSql). Every
+    // existing account starts personal.
+    version: 8,
+    up: async (db) => {
+      await db.execAsync(`
+        ALTER TABLE accounts ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

@@ -103,3 +103,40 @@ describe('dayNetMinor — the Accounts day header', () => {
     });
   });
 });
+
+describe('dayNetMinor — private accounts (mirrors Reports)', () => {
+  const PRIVATE = new Set(['room']);
+  const at = {
+    id: 'x',
+    status: 'approved',
+    name: 'x',
+    amountMinor: 1000,
+    occurredAt: '2026-08-09T12:00:00.000Z',
+    source: 'manual',
+    confidenceFlags: [],
+    createdAt: '2026-08-09T12:00:00.000Z',
+    updatedAt: '2026-08-09T12:00:00.000Z',
+  } as const;
+  const tx = (t: object) => ({ ...at, ...t }) as unknown as Transaction;
+
+  it("a private account's own spending and income are not personal", () => {
+    expect(dayNetMinor(tx({ type: 'expense', accountId: 'room', categoryId: 'c' }), undefined, PRIVATE)).toBe(0);
+    expect(dayNetMinor(tx({ type: 'income', accountId: 'room', categoryId: 'c' }), undefined, PRIVATE)).toBe(0);
+    expect(dayNetMinor(tx({ type: 'expense', accountId: 'bank', categoryId: 'c' }), undefined, PRIVATE)).toBe(-1000);
+  });
+
+  it('crossing the boundary counts: into private −, out of private +', () => {
+    expect(dayNetMinor(tx({ type: 'transfer', accountId: 'bank', toAccountId: 'room' }), undefined, PRIVATE)).toBe(-1000);
+    expect(dayNetMinor(tx({ type: 'transfer', accountId: 'room', toAccountId: 'bank' }), undefined, PRIVATE)).toBe(1000);
+    expect(dayNetMinor(tx({ type: 'transfer', accountId: 'bank', toAccountId: 'cash' }), undefined, PRIVATE)).toBe(0);
+  });
+
+  it('with an account selected it is still plain cash, private or not', () => {
+    expect(dayNetMinor(tx({ type: 'expense', accountId: 'room', categoryId: 'c' }), 'room', PRIVATE)).toBe(-1000);
+    expect(dayNetMinor(tx({ type: 'transfer', accountId: 'bank', toAccountId: 'room' }), 'room', PRIVATE)).toBe(1000);
+  });
+
+  it('without the set, behaviour is exactly as before', () => {
+    expect(dayNetMinor(tx({ type: 'transfer', accountId: 'bank', toAccountId: 'room' }))).toBe(0);
+  });
+});

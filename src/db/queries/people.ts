@@ -2,6 +2,13 @@ import * as Crypto from 'expo-crypto';
 
 import { isSuspiciousEntityReference } from '@/ai/interpretation/injection';
 import { getDb } from '@/db/client';
+import {
+  INSERT_PERSON_SQL,
+  LIST_PEOPLE_BY_NAME_SQL,
+  LIST_PEOPLE_SQL,
+  LIST_PEOPLE_WITH_NET_SQL,
+  SET_PERSON_ORDER_SQL,
+} from '@/db/queries/peopleSql';
 import type { Person } from '@/domain/types';
 
 /**
@@ -27,6 +34,7 @@ interface PersonRow {
   id: string;
   name: string;
   unresolved: number;
+  sort_order: number;
   created_at: string;
 }
 
@@ -35,6 +43,7 @@ function fromRow(row: PersonRow): Person {
     id: row.id,
     name: row.name,
     unresolved: row.unresolved === 1,
+    sortOrder: row.sort_order,
     createdAt: row.created_at,
   };
 }
@@ -44,20 +53,36 @@ export async function createPerson(name: string, unresolved = false): Promise<Pe
   const db = await getDb();
   const id = Crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  await db.runAsync(
-    'INSERT INTO people (id, name, unresolved, created_at) VALUES (?, ?, ?, ?)',
+  await db.runAsync(INSERT_PERSON_SQL, id, safeName, unresolved ? 1 : 0, createdAt);
+  const row = await db.getFirstAsync<{ sort_order: number }>(
+    'SELECT sort_order FROM people WHERE id = ?',
     id,
-    safeName,
-    unresolved ? 1 : 0,
-    createdAt,
   );
-  return { id, name: safeName, unresolved, createdAt };
+  return { id, name: safeName, unresolved, sortOrder: row?.sort_order ?? 0, createdAt };
 }
 
-export async function listPeople(): Promise<Person[]> {
+/**
+ * `manual` (default) is the user's own order, for anything they look at.
+ * `name` is for machine resolution (voice), where a stable order independent
+ * of drag-and-drop keeps behaviour predictable.
+ */
+export async function listPeople(order: 'manual' | 'name' = 'manual'): Promise<Person[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<PersonRow>('SELECT * FROM people ORDER BY name');
+  const rows = await db.getAllAsync<PersonRow>(
+    order === 'manual' ? LIST_PEOPLE_SQL : LIST_PEOPLE_BY_NAME_SQL,
+  );
   return rows.map(fromRow);
+}
+
+/** Persist a new manual order: `ids[0]` becomes first. One transaction, so a
+ *  crash can never leave two people sharing a slot. */
+export async function savePeopleOrder(ids: string[]): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    for (let i = 0; i < ids.length; i++) {
+      await db.runAsync(SET_PERSON_ORDER_SQL, i, ids[i]!);
+    }
+  });
 }
 
 export async function getPerson(id: string): Promise<Person | null> {
@@ -95,23 +120,10 @@ export interface PersonWithNet {
   netMinor: number;
 }
 
-/** Everyone with their §4.3 net balance in one query (no N+1). */
+/** Everyone with their §4.3 net balance, in the user's manual order. */
 export async function listPeopleWithNetBalances(): Promise<PersonWithNet[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<PersonRow & { net: number }>(
-    `SELECT p.*, COALESCE(SUM(
-       CASE t.direction
-         WHEN 'lend'                    THEN  t.amount
-         WHEN 'lend_repayment_received' THEN -t.amount
-         WHEN 'borrow'                  THEN -t.amount
-         WHEN 'borrow_repayment_made'   THEN  t.amount
-       END), 0) AS net
-     FROM people p
-     LEFT JOIN transactions t
-       ON t.person_id = p.id AND t.type = 'lending' AND t.status = 'approved'
-     GROUP BY p.id
-     ORDER BY p.name`,
-  );
+  const rows = await db.getAllAsync<PersonRow & { net: number }>(LIST_PEOPLE_WITH_NET_SQL);
   return rows.map((row) => ({ person: fromRow(row), netMinor: row.net }));
 }
 

@@ -131,7 +131,7 @@ describe('csvAmountMinor', () => {
 describe('transactionsToCsv', () => {
   it('starts with the header row', () => {
     const csv = transactionsToCsv([]);
-    expect(csv).toBe('Date,Time,Name,Type,Amount,Category,Account,To Account,Person,Direction');
+    expect(csv).toBe('Date,Time,Name,Type,Amount,Category,Account,To Account,Person,Direction,Private');
   });
 
   it('writes one row per transaction in the given order', () => {
@@ -150,9 +150,21 @@ describe('transactionsToCsv', () => {
     const csv = transactionsToCsv([item(tx({ type: 'expense', amountMinor: 100, name: 'Rice, dhal' }))]);
     const dataLine = csv.split('\r\n')[1];
     expect(dataLine).toContain('"Rice, dhal"');
-    // 10 columns means 9 separating commas — the quoted one must not count.
-    expect(dataLine.split(',').length).toBe(10 + 1); // the escaped name adds one
+    // 11 columns means 10 separating commas — the quoted one must not count.
+    expect(dataLine.split(',').length).toBe(11 + 1); // the escaped name adds one
     expect(dataLine.startsWith('2026-08-23,')).toBe(true);
+  });
+
+  it('marks rows on a private account (either side of a transfer) in the Private column', () => {
+    const csv = transactionsToCsv([
+      item(tx({ type: 'expense', amountMinor: 100, name: 'Room gas' }), { accountPrivate: true }),
+      item(tx({ type: 'transfer', amountMinor: 100, name: 'Top up' }), { toAccountPrivate: true }),
+      item(tx({ type: 'expense', amountMinor: 100, name: 'Mine' })),
+    ]);
+    const [, roomLine, topUpLine, mineLine] = csv.split('\r\n');
+    expect(roomLine!.endsWith(',Yes')).toBe(true);
+    expect(topUpLine!.endsWith(',Yes')).toBe(true);
+    expect(mineLine!.endsWith(',')).toBe(true);
   });
 
   it('fills the transfer and lending columns', () => {

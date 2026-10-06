@@ -50,6 +50,14 @@ function schemaV1(): string {
   return match[1];
 }
 
+/** The body of migration N's execAsync template, exactly as it ships. */
+function migrationSql(version: number): string {
+  const source = readFileSync(join(__dirname, '../migrations.ts'), 'utf8');
+  const match = source.match(new RegExp(`version: ${version},[\\s\\S]*?await db\\.execAsync\\(\`([\\s\\S]*?)\`\\);`));
+  if (!match) throw new Error(`Could not find migration ${version} in migrations.ts`);
+  return match[1]!;
+}
+
 /** occurred_at is stored UTC; these all land inside August local time. */
 function tx(row: {
   id: string;
@@ -100,6 +108,8 @@ beforeAll(() => {
     INSERT INTO people VALUES ('p1','Nuski',0,'2026-08-01');
     INSERT INTO people VALUES ('p2','Shaam',0,'2026-08-01');
   `);
+  // Later migrations that touch tables the reports read (v8: accounts.is_private).
+  db.exec(migrationSql(8));
 
   // Reportable rows.
   tx({ id: 't1', type: 'expense', name: 'Lunch', amount: 50_000, at: '2026-08-05T06:00:00Z', account: 'a1', category: 'c1', person: 'p1' });

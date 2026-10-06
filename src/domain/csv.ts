@@ -28,6 +28,7 @@ export const CSV_HEADERS = [
   'To Account',
   'Person',
   'Direction',
+  'Private',
 ] as const;
 
 const DIRECTION_LABELS: Record<LendingDirection, string> = {
@@ -44,6 +45,9 @@ export interface CsvTransaction {
   toAccountName: string | null;
   categoryName: string | null;
   personName: string | null;
+  /** Optional so older callers/tests stay valid; absent means personal. */
+  accountPrivate?: boolean;
+  toAccountPrivate?: boolean;
 }
 
 /**
@@ -95,6 +99,7 @@ function row(item: CsvTransaction, accountId?: string): string[] {
     item.toAccountName ?? '',
     item.personName ?? '',
     tx.type === 'lending' ? DIRECTION_LABELS[tx.direction] : '',
+    item.accountPrivate || item.toAccountPrivate ? 'Yes' : '',
   ];
 }
 

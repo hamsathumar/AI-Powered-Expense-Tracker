@@ -57,10 +57,30 @@ export function accountDeltaMinor(tx: Transaction, selectedAccountId?: string): 
  *
  * Note the consequence of the first rule, which is intended: a day containing
  * only transfers or lending nets to zero. Nothing was spent or earned.
+ *
+ * **Private accounts** follow Reports exactly (reportSql.reportRowsSql): in the
+ * all-accounts view a private account's own income/expense is not personal
+ * spending, while a transfer INTO a private account is (−) and one coming back
+ * OUT of it is income (+). With one account selected nothing changes — it is
+ * that account's cash, private or not.
  */
-export function dayNetMinor(tx: Transaction, selectedAccountId?: string): number {
+const NO_PRIVATE: ReadonlySet<string> = new Set();
+
+export function dayNetMinor(
+  tx: Transaction,
+  selectedAccountId?: string,
+  privateAccountIds: ReadonlySet<string> = NO_PRIVATE,
+): number {
   if (selectedAccountId) return accountDeltaMinor(tx, selectedAccountId);
-  if (tx.type === 'income') return tx.amountMinor;
-  if (tx.type === 'expense') return -tx.amountMinor;
-  return 0; // transfer + lending are movements, never spending
+  if (tx.type === 'income' || tx.type === 'expense') {
+    if (privateAccountIds.has(tx.accountId)) return 0;
+    return tx.type === 'income' ? tx.amountMinor : -tx.amountMinor;
+  }
+  if (tx.type === 'transfer') {
+    const fromPrivate = privateAccountIds.has(tx.accountId);
+    const toPrivate = privateAccountIds.has(tx.toAccountId);
+    if (!fromPrivate && toPrivate) return -tx.amountMinor;
+    if (fromPrivate && !toPrivate) return tx.amountMinor;
+  }
+  return 0; // other transfers + lending are movements, never spending
 }

@@ -50,25 +50,30 @@ export function accountBalanceMinor(
 }
 
 /**
+ * One transaction's effect on a person's net balance (§4.3): + they owe the
+ * user more, − less. Zero for anything that is not an APPROVED lending row
+ * with this person.
+ */
+export function personEffectMinor(tx: Transaction, personId: string): number {
+  if (tx.type !== 'lending' || tx.status !== 'approved' || tx.personId !== personId) return 0;
+  switch (tx.direction) {
+    case 'lend':
+      return tx.amountMinor;
+    case 'lend_repayment_received':
+      return -tx.amountMinor;
+    case 'borrow':
+      return -tx.amountMinor;
+    case 'borrow_repayment_made':
+      return tx.amountMinor;
+  }
+}
+
+/**
  * Person net balance (§4.3). Positive = they owe the user; negative = the
  * user owes them. Approved lending rows only.
  */
 export function personNetBalanceMinor(transactions: Transaction[], personId: string): number {
-  return transactions.reduce((sum, tx) => {
-    if (tx.type !== 'lending' || tx.status !== 'approved' || tx.personId !== personId) {
-      return sum;
-    }
-    switch (tx.direction) {
-      case 'lend':
-        return sum + tx.amountMinor;
-      case 'lend_repayment_received':
-        return sum - tx.amountMinor;
-      case 'borrow':
-        return sum - tx.amountMinor;
-      case 'borrow_repayment_made':
-        return sum + tx.amountMinor;
-    }
-  }, 0);
+  return transactions.reduce((sum, tx) => sum + personEffectMinor(tx, personId), 0);
 }
 
 /** Spending/earning totals for reports — golden-rule filtered by definition. */

@@ -17,6 +17,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { listAccounts } from '@/db/queries/accounts';
 import { getPerson, getPersonNetBalanceMinor } from '@/db/queries/people';
 import { insertTransaction, listTransactionItemsForPerson } from '@/db/queries/transactions';
+import { netTone } from '@/domain/lendingPresentation';
 import { formatAmount, formatMinorUnits, parseAmountInput } from '@/domain/money';
 import { allocateSettlement, type SettlementCharge } from '@/domain/settlement';
 import type { Account, Person } from '@/domain/types';
@@ -144,7 +145,9 @@ export default function SettleUpScreen() {
             </Text>
           </View>
           <Text style={[type.h2, { color: colors.text }]}>{person.name}</Text>
-          <Text style={[type.display, { color: colors.lending }]}>{describeNet(netMinor)}</Text>
+          <Text style={[type.display, { color: colors[netTone(netMinor) ?? 'lent'] }]}>
+            {describeNet(netMinor)}
+          </Text>
           <Text style={[type.caption, { color: colors.textMuted }]}>
             {receiving ? 'They pay you back' : 'You pay them back'} · edit for a partial settlement
           </Text>

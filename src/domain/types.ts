@@ -21,6 +21,8 @@ export interface Account {
   icon?: string;
   color?: string;
   archived: boolean;
+  /** Kept out of Reports and Home totals — a separate pot, not personal money. */
+  isPrivate: boolean;
   createdAt: string;
 }
 
@@ -41,6 +43,8 @@ export interface Person {
   name: string;
   /** Created from an unrecognized voice name; needs user confirmation. */
   unresolved: boolean;
+  /** Position in the user's manual order (0 = first). */
+  sortOrder: number;
   createdAt: string;
 }
 

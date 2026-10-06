@@ -140,13 +140,15 @@ function FilterSheetBody({
 
   const accountChips: ChipItem[] = [
     { id: ALL, label: 'All', icon: 'grid' },
+    // A private account is shown with a lock and the word, never colour alone.
     ...accounts.map((a) => ({
       id: a.id,
-      label: a.name,
-      icon: (a.icon ?? 'credit-card') as ChipItem['icon'],
+      label: a.isPrivate ? `${a.name} · Private` : a.name,
+      icon: (a.isPrivate ? 'lock' : (a.icon ?? 'credit-card')) as ChipItem['icon'],
       color: a.color,
     })),
   ];
+  const hasPrivate = accounts.some((a) => a.isPrivate);
 
   const personChips: ChipItem[] = [
     { id: ALL, label: 'All', icon: 'grid' },
@@ -231,6 +233,11 @@ function FilterSheetBody({
               selectedId={draft.accountId ?? ALL}
               onSelect={(id) => setDraft((d) => ({ ...d, accountId: id === ALL ? null : id }))}
             />
+            {hasPrivate ? (
+              <Text style={[type.caption, { color: colors.textMuted }]}>
+                Private accounts are left out of “All”. Pick one to see its own report.
+              </Text>
+            ) : null}
           </View>
 
           {/* Include categories */}

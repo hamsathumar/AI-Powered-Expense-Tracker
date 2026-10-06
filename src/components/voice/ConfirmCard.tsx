@@ -22,7 +22,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { Amount } from '@/components/Amount';
 import { commitPendingOperation, type EvaluatedPending } from '@/ai/commitOperation';
-import type { LendingDirection } from '@/domain/types';
+import { lendingPresentation } from '@/domain/lendingPresentation';
+import type { PendingOutcome } from '@/state/pendingOutcomes';
 import { hapticSuccess, hapticTick } from '@/lib/haptics';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, layout, minTouchTarget, radius, space, type } from '@/theme/tokens';
@@ -41,13 +42,6 @@ const TYPE_LABEL: Record<string, string> = {
   income: 'Income',
   transfer: 'Transfer',
   lending: 'Lending',
-};
-
-const DIRECTION_LABEL: Record<LendingDirection, string> = {
-  lend: 'Lent out',
-  lend_repayment_received: 'Repaid to you',
-  borrow: 'Borrowed',
-  borrow_repayment_made: 'Repaid by you',
 };
 
 /** Human date from the operation's date expression. Null → today. */
@@ -87,7 +81,7 @@ function chipsFor(op: EvaluatedPending['op']): ChipSpec[] {
     chips.push({ ...ref(op.person, 'Person needed'), icon: 'user' });
     chips.push({
       icon: 'shuffle',
-      label: op.direction ? DIRECTION_LABEL[op.direction] : 'Direction needed',
+      label: op.direction ? lendingPresentation(op.direction).kind : 'Direction needed',
       missing: !op.direction,
     });
   }
@@ -95,8 +89,22 @@ function chipsFor(op: EvaluatedPending['op']): ChipSpec[] {
   return chips;
 }
 
+/** How a resolved card reads. Each pairs an icon with words — never colour alone. */
+const RESOLVED: Record<
+  PendingOutcome | 'gone',
+  { icon: FeatherName; label: string; tone: 'income' | 'textMuted' }
+> = {
+  approved: { icon: 'check-circle', label: 'Approved · counting now', tone: 'income' },
+  saved: { icon: 'check-circle', label: 'Saved', tone: 'income' },
+  rejected: { icon: 'x-circle', label: 'Rejected · not recorded', tone: 'textMuted' },
+  gone: { icon: 'info', label: 'No longer pending', tone: 'textMuted' },
+};
+
 interface Props {
   item: EvaluatedPending;
+  /** Set once the pending item was approved / rejected / saved — HERE or on
+   *  another screen (state/pendingOutcomes.ts). Null while it is still pending. */
+  resolved?: PendingOutcome | 'gone' | null;
   /** Stagger offset (ms) so cards and their chips cascade in. */
   baseDelay: number;
   reduceMotion: boolean;
@@ -107,6 +115,7 @@ interface Props {
 
 export function ConfirmCard({
   item,
+  resolved = null,
   baseDelay,
   reduceMotion,
   onApproved,
@@ -118,6 +127,9 @@ export function ConfirmCard({
   const [status, setStatus] = useState<'idle' | 'committing' | 'approved'>('idle');
   const [error, setError] = useState<string | null>(null);
 
+  // The shared outcome wins; our own just-committed state covers the moment
+  // before the screen re-reads it, so the button never flashes back.
+  const outcome = resolved ?? (status === 'approved' ? 'approved' : null);
   const specialized = op.kind === 'bill_split' || op.kind === 'recurring';
   const blocked = !gate.approvable;
   const chips = chipsFor(op);
@@ -161,7 +173,12 @@ export function ConfirmCard({
           // rather than rendering a zero that looks like a real amount.
           <Text style={[styles.amount, { color: isDark ? colors.warning : colors.lending }]}>Amount needed</Text>
         ) : (
-          <Amount valueMinor={op.amountMinor} txType={op.operation} textStyle={styles.amount} />
+          <Amount
+            valueMinor={op.amountMinor}
+            txType={op.operation}
+            direction={op.kind === 'lending' ? op.direction : undefined}
+            textStyle={styles.amount}
+          />
         )}
       </View>
 
@@ -201,10 +218,12 @@ export function ConfirmCard({
       {error ? <Text style={[type.caption, { color: colors.expense }]}>{error}</Text> : null}
 
       {/* Action */}
-      {status === 'approved' ? (
+      {outcome ? (
         <View style={[styles.approvedRow]}>
-          <Feather name="check-circle" size={16} color={colors.income} />
-          <Text style={[styles.approvedLabel, { color: colors.income }]}>Approved · counting now</Text>
+          <Feather name={RESOLVED[outcome].icon} size={16} color={colors[RESOLVED[outcome].tone]} />
+          <Text style={[styles.approvedLabel, { color: colors[RESOLVED[outcome].tone] }]}>
+            {RESOLVED[outcome].label}
+          </Text>
         </View>
       ) : specialized ? (
         <Pressable

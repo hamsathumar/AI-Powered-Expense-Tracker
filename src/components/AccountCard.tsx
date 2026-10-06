@@ -43,7 +43,9 @@ export function AccountCard({ account, balanceMinor, selected, onPress, onEdit }
   const meta = ACCOUNT_TYPE_META[account.type];
   const accent = colors[meta.colorKey];
   const icon = (account.icon as ComponentProps<typeof Feather>['name']) ?? meta.icon;
-  const subtitle = [meta.label, account.ownerLabel].filter(Boolean).join(' · ');
+  const subtitle = [meta.label, account.isPrivate ? 'Private' : null, account.ownerLabel]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <PressableScale
@@ -74,9 +76,14 @@ export function AccountCard({ account, balanceMinor, selected, onPress, onEdit }
               <Text style={[type.caption, { color: colors.onPrimary }]}>Showing below</Text>
             </View>
           ) : (
-            <Text numberOfLines={1} style={[type.caption, { color: colors.textMuted }]}>
-              {subtitle}
-            </Text>
+            <View style={styles.subtitleRow}>
+              {account.isPrivate ? (
+                <Feather name="lock" size={11} color={colors.textMuted} />
+              ) : null}
+              <Text numberOfLines={1} style={[type.caption, styles.subtitleText, { color: colors.textMuted }]}>
+                {subtitle}
+              </Text>
+            </View>
           )}
         </View>
         <View style={styles.trailing}>
@@ -103,6 +110,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   edge: { width: layout.accountEdge },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  subtitleText: { flexShrink: 1 },
   content: {
     flex: 1,
     flexDirection: 'row',

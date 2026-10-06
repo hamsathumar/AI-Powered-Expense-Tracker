@@ -38,7 +38,9 @@ export const lightColors = {
   expense:      '#D1462F', // vivid clay-red (never a dominant fill)
   income:       '#1E9557', // vivid emerald
   transfer:     '#2C74BE', // clear blue
-  lending:      '#B07514', // rich gold
+  lending:      '#B07514', // rich gold (the lending TYPE; directions use lent/borrowed)
+  lent:         '#ab770fff', // deep plum — money owed TO me (+ lends, − repayments received)
+  borrowed:     '#b51c14ff', // burnt orange — money I owe (− borrows, + repayments made)
   warning:      '#C98A1E', // amber — pending / needs review
 
   // Account-type accents (paired with the type label, not colour-alone)
@@ -81,6 +83,8 @@ export const darkColors: ThemeColors = {
   income:       '#55D08C',
   transfer:     '#6FB2F2',
   lending:      '#F0B84E',
+  lent:         '#E39AD6',
+  borrowed:     '#FFA066',
   warning:      '#F2C24F',
 
   accountCash:  '#55D08C',
@@ -226,6 +230,16 @@ export const layout = {
   keypadKeyH: 50,
   tabBarPaddingBottom: 22, // above the home indicator
 
+  // People list: rows are a fixed height so drag-to-reorder can compute
+  // slots (fits name + the "Unconfirmed name" caption).
+  personRowH: 68,
+  /** Finger this close to the scroll view's top/bottom edge auto-scrolls a drag. */
+  dragAutoScrollEdge: 80,
+  /** Points scrolled per frame while auto-scrolling a drag. */
+  dragAutoScrollStep: 6,
+  /** A picked-up row grows by this much. */
+  dragLiftScale: 1.03,
+
   // Accounts tab: floating search + filter bar with the add-account button
   // stacked above it (all measured from the bottom of the screen area, which
   // the tab navigator already ends at the tab bar).
@@ -274,6 +288,8 @@ export const motion = {
   layout: 220,
   /** Charts drawing themselves in, numbers counting up. */
   chart: 420,
+  /** How long a row must be held before it lifts for drag-to-reorder. */
+  holdToDrag: 280,
   /** Scale targets, so press feedback is uniform app-wide. */
   pressScale: { control: 0.97, card: 0.98, fab: 0.9 },
 } as const;

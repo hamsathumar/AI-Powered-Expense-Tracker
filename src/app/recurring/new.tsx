@@ -6,7 +6,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { buildRecurringInitial, recurringEndNote, recurringFrequencyNote } from '@/ai/specializedPrefill';
 import { RecurringForm } from '@/components/RecurringForm';
 import { createTemplate } from '@/db/queries/recurring';
-import { deletePendingOperation, getPendingOperation } from '@/db/queries/pendingOperations';
+import { markPendingOperationSaved } from '@/ai/commitOperation';
+import { getPendingOperation } from '@/db/queries/pendingOperations';
 import type { RecurringTemplate } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
 
@@ -53,7 +54,7 @@ export default function NewRecurringScreen() {
         onSubmit={async (template) => {
           await createTemplate(template);
           // Consume the pending AI operation so it leaves the review queue.
-          if (fromPending) await deletePendingOperation(fromPending);
+          if (fromPending) await markPendingOperationSaved(fromPending);
           router.back();
         }}
       />

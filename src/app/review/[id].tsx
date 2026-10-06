@@ -18,15 +18,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AmountInput } from '@/components/AmountInput';
 import { DateTimeField } from '@/components/DateTimeField';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { commitPendingOperation } from '@/ai/commitOperation';
+import { commitPendingOperation, rejectPendingOperation } from '@/ai/commitOperation';
 import { resolveDateExpression } from '@/ai/interpretation/dates';
 import { evaluateApproval } from '@/ai/interpretation/gate';
 import type { LendingDirection, ResolvedOperation, ResolvedRef } from '@/ai/interpretation/types';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { createPerson, listPeople } from '@/db/queries/people';
-import { deletePendingOperation, getPendingOperation, updatePendingOperation } from '@/db/queries/pendingOperations';
+import { getPendingOperation, updatePendingOperation } from '@/db/queries/pendingOperations';
 import { formatMinorUnits, parseAmountInput } from '@/domain/money';
+import { hapticSuccess } from '@/lib/haptics';
 import type { Account, Category, Person } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, layout, radius, space, type } from '@/theme/tokens';
@@ -236,6 +237,7 @@ export default function ReviewOperationScreen() {
     await save();
     const res = await commitPendingOperation(id);
     if (res.committed) {
+      hapticSuccess();
       router.back();
     } else {
       Alert.alert('Not ready yet', res.blockers.map((b) => b.message).join('\n'));
@@ -244,7 +246,7 @@ export default function ReviewOperationScreen() {
   };
 
   const reject = () => {
-    deletePendingOperation(id).then(() => router.back());
+    rejectPendingOperation(id).then(() => router.back());
   };
 
   return (

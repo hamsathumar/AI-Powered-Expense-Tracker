@@ -21,6 +21,7 @@ import {
   listPendingOperations,
 } from '@/db/queries/pendingOperations';
 import { insertTransaction } from '@/db/queries/transactions';
+import { recordPendingOutcome } from '@/state/pendingOutcomes';
 
 export interface CommitResult {
   committed: boolean;
@@ -33,7 +34,7 @@ async function loadContext(): Promise<ResolveContext> {
     listAccounts(),
     listCategories('expense'),
     listCategories('income'),
-    listPeople(),
+    listPeople('name'),
   ]);
   const lite = <T extends { id: string; name: string }>(xs: T[]): EntityLite[] =>
     xs.map((x) => ({ id: x.id, name: x.name }));
@@ -87,7 +88,22 @@ async function commitRecord(
   // The capture time, not now — see toTransaction.ts.
   const inserted = await insertTransaction(toNewTransaction(op, record.createdAt));
   await deletePendingOperation(record.id);
+  recordPendingOutcome(record.id, 'approved');
   return { committed: true, transactionId: inserted.id, blockers: [] };
+}
+
+/** Reject: the operation is discarded and never reaches the ledger. Every
+ *  screen still showing it learns why it left (state/pendingOutcomes.ts). */
+export async function rejectPendingOperation(id: string): Promise<void> {
+  await deletePendingOperation(id);
+  recordPendingOutcome(id, 'rejected');
+}
+
+/** A bill-split / recurring operation finished in its own editor, which wrote
+ *  the real rows itself — consume the pending item as saved. */
+export async function markPendingOperationSaved(id: string): Promise<void> {
+  await deletePendingOperation(id);
+  recordPendingOutcome(id, 'saved');
 }
 
 /**

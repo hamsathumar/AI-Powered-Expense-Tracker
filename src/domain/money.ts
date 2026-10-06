@@ -72,6 +72,19 @@ export function parseAmountInput(
 }
 
 /**
+ * Opening balances are the one signed amount a user types. The field itself
+ * stays digits-only (iOS's decimal pad has no minus key), so the sign is a
+ * separate choice and these two helpers join / split it.
+ */
+export function applyBalanceSign(magnitudeMinor: number, negative: boolean): number {
+  return negative && magnitudeMinor !== 0 ? -magnitudeMinor : magnitudeMinor;
+}
+
+export function splitBalanceSign(minor: number): { magnitudeMinor: number; negative: boolean } {
+  return { magnitudeMinor: Math.abs(minor), negative: minor < 0 };
+}
+
+/**
  * Axis-sized money: 5000000 → "50K", 125050 → "1.3K", 4500 → "45".
  * Unsigned and symbol-less by design — chart axes have no room, and the units
  * are established by the chart's own labelling.

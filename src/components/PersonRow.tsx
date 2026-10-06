@@ -5,8 +5,9 @@
  *
  * Direction is stated in WORDS — never colour or sign alone.
  */
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
+import { describeNetWith, netTone } from '@/domain/lendingPresentation';
 import { formatAmount } from '@/domain/money';
 import type { Person } from '@/domain/types';
 import { useTheme } from '@/theme/ThemeContext';
@@ -23,21 +24,21 @@ export function initials(name: string): string {
 
 /** Worded net balance. Positive = they owe the user (§4.3). */
 export function describeNet(netMinor: number): string {
-  if (netMinor > 0) return `Owes you ${formatAmount(netMinor)}`;
-  if (netMinor < 0) return `You owe ${formatAmount(-netMinor)}`;
-  return 'Settled up';
+  return describeNetWith(netMinor, (minor) => formatAmount(minor));
 }
 
 interface Props {
   person: Person;
   netMinor: number;
+  style?: StyleProp<ViewStyle>;
 }
 
-export function PersonRow({ person, netMinor }: Props) {
+export function PersonRow({ person, netMinor, style }: Props) {
   const { colors } = useTheme();
+  const tone = netTone(netMinor);
 
   return (
-    <View style={[styles.row, { backgroundColor: colors.surface }]}>
+    <View style={[styles.row, { backgroundColor: colors.surface }, style]}>
       <View style={[styles.avatar, { backgroundColor: colors.primarySoft }]}>
         <Text style={[type.label, { color: colors.primary }]}>{initials(person.name)}</Text>
       </View>
@@ -52,7 +53,7 @@ export function PersonRow({ person, netMinor }: Props) {
       <Text
         style={[
           type.label,
-          { color: netMinor === 0 ? colors.textMuted : colors.lending },
+          { color: tone ? colors[tone] : colors.textMuted },
         ]}>
         {describeNet(netMinor)}
       </Text>

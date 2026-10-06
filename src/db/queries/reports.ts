@@ -28,12 +28,18 @@ export function monthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** Total balance across all non-archived accounts (approved-only, §4.2). */
+/** Total PERSONAL balance: non-archived, non-private accounts (approved-only, §4.2). */
 export async function getTotalBalanceMinor(): Promise<number> {
-  const balances = await listAccountBalancesMinor();
+  const balances = await listAccountBalancesMinor({ personalOnly: true });
   let total = 0;
   for (const value of balances.values()) total += value;
   return total;
+}
+
+/** 'yyyy-MM' → the inclusive day range of that month. 'yyyy-MM-31' is a safe
+ *  upper bound for any month: report days compare as strings. */
+function monthFilter(month: string): ReportFilter {
+  return { startDay: `${month}-01`, endDay: `${month}-31` };
 }
 
 export interface MonthlySummary {
@@ -41,19 +47,10 @@ export interface MonthlySummary {
   expenseMinor: number;
 }
 
+/** Home's month in/out — the same rows as Reports (golden rule + private accounts). */
 export async function getMonthlySummary(month: string): Promise<MonthlySummary> {
-  const db = await getDb();
-  const row = await db.getFirstAsync<{ income: number; expense: number }>(
-    `SELECT
-       COALESCE(SUM(CASE WHEN type = 'income'  THEN amount END), 0) AS income,
-       COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) AS expense
-     FROM transactions
-     WHERE status = 'approved'
-       AND type IN ('expense','income')            -- golden rule
-       AND strftime('%Y-%m', occurred_at, 'localtime') = ?`,
-    month,
-  );
-  return { incomeMinor: row?.income ?? 0, expenseMinor: row?.expense ?? 0 };
+  const { incomeMinor, expenseMinor } = await getRangeSummary(monthFilter(month));
+  return { incomeMinor, expenseMinor };
 }
 
 export interface CategorySpending {
@@ -64,65 +61,16 @@ export interface CategorySpending {
   totalMinor: number;
 }
 
+/** Home's spending list — the Reports category breakdown for the month. */
 export async function getSpendingByCategory(month: string): Promise<CategorySpending[]> {
-  const db = await getDb();
-  return db.getAllAsync<CategorySpending & { totalMinor: number }>(
-    `SELECT c.id AS categoryId, c.name, c.icon, c.color, SUM(t.amount) AS totalMinor
-     FROM transactions t
-     JOIN categories c ON c.id = t.category_id
-     WHERE t.status = 'approved'
-       AND t.type = 'expense'                      -- golden rule
-       AND strftime('%Y-%m', t.occurred_at, 'localtime') = ?
-     GROUP BY c.id
-     ORDER BY totalMinor DESC`,
-    month,
-  );
-}
-
-export interface DailySpending {
-  /** Day-of-month 1..31 (device-local). */
-  day: number;
-  totalMinor: number;
-}
-
-/** Approved expense per day of the month (golden rule). Days with no spending
- *  are omitted — the caller fills the full month. */
-export async function getDailySpending(month: string): Promise<DailySpending[]> {
-  const db = await getDb();
-  return db.getAllAsync<DailySpending>(
-    `SELECT CAST(strftime('%d', occurred_at, 'localtime') AS INTEGER) AS day,
-            SUM(amount) AS totalMinor
-     FROM transactions
-     WHERE status = 'approved'
-       AND type = 'expense'                        -- golden rule
-       AND strftime('%Y-%m', occurred_at, 'localtime') = ?
-     GROUP BY day
-     ORDER BY day`,
-    month,
-  );
-}
-
-export interface AccountSpending {
-  accountId: string;
-  name: string;
-  type: 'bank' | 'card' | 'cash';
-  totalMinor: number;
-}
-
-/** Approved expense per account for the month (golden rule). */
-export async function getSpendingByAccount(month: string): Promise<AccountSpending[]> {
-  const db = await getDb();
-  return db.getAllAsync<AccountSpending>(
-    `SELECT a.id AS accountId, a.name, a.type, SUM(t.amount) AS totalMinor
-     FROM transactions t
-     JOIN accounts a ON a.id = t.account_id
-     WHERE t.status = 'approved'
-       AND t.type = 'expense'                      -- golden rule
-       AND strftime('%Y-%m', t.occurred_at, 'localtime') = ?
-     GROUP BY a.id
-     ORDER BY totalMinor DESC`,
-    month,
-  );
+  const slices = await getBreakdown(monthFilter(month), 'category', 'expense');
+  return slices.map((s) => ({
+    categoryId: s.id,
+    name: s.name,
+    icon: s.icon,
+    color: s.color,
+    totalMinor: s.totalMinor,
+  }));
 }
 
 // ---------------------------------------------------------------------------
