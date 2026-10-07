@@ -55,7 +55,19 @@ function stripFences(text: string): string {
     .trim();
 }
 
+/**
+ * The human part of a Gemini error body. Google answers with JSON
+ * (`{"error":{"message":"models/x is not found …"}}`), whose first LINE is just
+ * "{" — which hid the real reason (a 404 for an unknown model name read like a
+ * mystery). Prefer the message; fall back to the first line of plain text.
+ */
 function firstLine(text: string): string {
+  try {
+    const message = (JSON.parse(text) as { error?: { message?: unknown } }).error?.message;
+    if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 300);
+  } catch {
+    // not JSON — fall through
+  }
   return text.split('\n')[0]?.slice(0, 200) ?? '';
 }
 
@@ -112,6 +124,11 @@ export async function callGemini(call: GeminiCall): Promise<unknown> {
       throw new Error('Gemini rejected the API key. Check it in Settings.');
     } else if (response.status === 429) {
       throw new Error('Gemini rate limit or quota reached. Try again later.');
+    } else if (response.status === 404) {
+      // Almost always the model name: retired by Google, or mistyped.
+      throw new Error(
+        `Gemini does not know the model "${call.model}" (404) — check the model name in Settings. ${firstLine(detail)}`,
+      );
     } else {
       throw new Error(`Gemini error ${response.status}. ${firstLine(detail)}`);
     }

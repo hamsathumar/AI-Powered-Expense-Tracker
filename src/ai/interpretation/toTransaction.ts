@@ -30,6 +30,7 @@ export function toNewTransaction(op: ResolvedOperation, capturedAt: string): New
     status: 'approved' as const,
     source: 'voice' as const,
     name: op.name,
+    ...(op.note ? { description: op.note } : {}),
     // Non-null by construction: the gate refuses a null/non-positive amount,
     // and this function is only ever reached after the gate passes.
     amountMinor: op.amountMinor!,
@@ -55,4 +56,31 @@ export function toNewTransaction(op: ResolvedOperation, capturedAt: string): New
         direction: op.direction!,
       };
   }
+}
+
+/**
+ * Everything one approved operation writes (V1.3). Usually one row. An expense
+ * someone ELSE paid for ("Sham paid 280 for my dinner", TC-039) is two: a
+ * borrow from that person into the account and the expense out of it — the
+ * same pair a bill split records when someone else paid (billSplit.ts Case B):
+ * net zero on the account, the spending reported on its date, and the debt on
+ * the person's balance. The caller inserts them atomically.
+ */
+export function toNewTransactions(op: ResolvedOperation, capturedAt: string): NewTransaction[] {
+  const expense = toNewTransaction(op, capturedAt);
+  if (op.operation !== 'expense' || !op.paidBy?.id) return [expense];
+  const payerName = op.paidBy.options[0]?.name ?? op.paidBy.reference ?? 'them';
+  const borrow: NewTransaction = {
+    status: 'approved',
+    source: 'voice',
+    type: 'lending',
+    direction: 'borrow',
+    name: `${op.name} · paid by ${payerName}`,
+    amountMinor: expense.amountMinor,
+    occurredAt: expense.occurredAt,
+    accountId: op.account!.id!,
+    personId: op.paidBy.id,
+    confidenceFlags: [],
+  };
+  return [borrow, expense];
 }

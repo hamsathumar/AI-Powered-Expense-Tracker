@@ -163,7 +163,7 @@ still include lending done through a private account.
 - Stage 9 ✅: Voice + Gemini — `src/ai/` (prompt, validate [tested], gemini
   REST client on the stable generateContent endpoint, parseVoice orchestrator),
   API key in expo-secure-store via Settings, model is a user setting
-  (default `gemini-2.5-flash`), expo-audio capture screen, floating mic on Home.
+  (default `gemini-3.5-flash-lite` since 2026-10-07 — 2.5-flash now 404s), expo-audio capture screen, floating mic on Home.
 
 - **Transaction AI V1.1 ✅ (2026-08-21):** second-round test evidence
   (`Test/AI_TEST_CASE_LOG_v2.md`, TC-021…TC-027) closed. Seven amendments —
@@ -265,6 +265,32 @@ still include lending done through a private account.
   queue, bulk approve, bill-split/recurring editors) goes through
   `commitPendingOperation` / `rejectPendingOperation` /
   `markPendingOperationSaved`. Never delete a pending operation directly.
+- **Transaction AI V1.3 — Phase A ✅ (2026-10-07):** third test round
+  (`Test/AI_TEST_CASE_LOG_v3.md`, TC-028…TC-040) — read
+  `Test/TRANSACTION_AI_V1_3_AMENDMENTS.md` FIRST for the AI layer now.
+  App-side only: action-vs-label conflicts app-owned (`finalizeConflicts`);
+  one message per problem + `issues.ts` `describeIssues` shared by the Logged
+  card / Home queue; `toAccount` used as the account for income/lending when
+  `account` is empty; `resolveAccountRef` strips generic words ("BOC bank
+  account" → BOC, type-checked); amountless-intent dedup; dates carry a clock
+  time (bare hour → "morning or evening?"); bill split has a When field;
+  whole-balance repayments filled from the approved balance with confirmation.
+  Tests: `src/ai/interpretation/v13.test.ts`.
+- **V1.3 Phase B ✅ (2026-10-07):** contract gained `note` (saved as the Note)
+  and `paidBy` (expense → atomic borrow + expense pair via
+  `toNewTransactions`); prompt rules + worked examples #8–#12 (notes, labels
+  are names, on-behalf = lend, paid-by, ATM = transfer to "Cash"); accounts
+  shown to the model with their type; critic ignores numbers inside notes;
+  backstops: `note_not_transaction` conflict, withdrawal-as-expense blocks,
+  withdrawal transfer → unique "Cash". "Confirm & approve" is an allow-list
+  (figure/day confirmations only). Eval corpus EV-16…EV-27. Live eval
+  27/27 on `gemini-3.5-flash-lite` (2026-10-07; backstop cases are
+  `offlineOnly`). Verified on-device 2026-10-07.
+- **V1.3 Phase C ✅ (2026-10-07):** voice diagnostics — `src/ai/diagnostics.ts`
+  (pure), migration 9 `voice_jobs.diagnostics` (latest 50 kept),
+  `ResolvedOperation.voiceJobId`, `VoiceDiagnosticsSheet` behind **Why?** on
+  the Logged screen and the review screen, Share = plain-text report. When a
+  voice reading is wrong, ASK FOR THE SHARED REPORT before guessing.
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -272,6 +298,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 484 tests, plus 16 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 575 tests, plus 16 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

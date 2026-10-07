@@ -41,9 +41,24 @@ export interface BillSplitPrefill {
   payerId: string;
   /** Names the AI heard that are NOT in People yet — user adds them (never auto-created). */
   unresolvedNames: string[];
+  /** When the bill happened (TC-037): the stated date resolved against the
+   *  moment it was SPOKEN, or that moment itself when no date was said. */
+  occurredAt: string;
+  /** Set when a date was stated but could not be understood (or its time is
+   *  am/pm-ambiguous) — the editor says so instead of quietly using today. */
+  dateNote: string | null;
 }
 
-export function buildBillSplitPrefill(op: ResolvedOperation, people: PersonLite[]): BillSplitPrefill {
+/**
+ * @param capturedAt when the split was spoken (the pending row's createdAt).
+ *   Dates are resolved against it, never against when the editor opens —
+ *   the same rule `toNewTransaction` follows for ordinary operations.
+ */
+export function buildBillSplitPrefill(
+  op: ResolvedOperation,
+  people: PersonLite[],
+  capturedAt: Date = new Date(),
+): BillSplitPrefill {
   const bs = op.specialized && op.specialized.kind === 'bill_split' ? op.specialized : null;
   const findPerson = (name: string) =>
     people.find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -82,6 +97,21 @@ export function buildBillSplitPrefill(op: ResolvedOperation, people: PersonLite[
     participantIds: [...participantIds],
     payerId,
     unresolvedNames: [...new Set(unresolved)],
+    ...splitDate(op.dateExpression, capturedAt),
+  };
+}
+
+function splitDate(expression: string | null, capturedAt: Date): { occurredAt: string; dateNote: string | null } {
+  const reference = Number.isNaN(capturedAt.getTime()) ? new Date() : capturedAt;
+  const resolution = resolveDateExpression(expression, reference);
+  if (!expression || (resolution.resolved && !resolution.timeNeedsConfirm)) {
+    return { occurredAt: resolution.iso, dateNote: null };
+  }
+  return {
+    occurredAt: resolution.iso,
+    dateNote: resolution.resolved
+      ? `You said “${expression}” — check whether that was morning or evening before saving.`
+      : `You said “${expression}”, but Kaasu could not turn that into a date. Set the date before saving.`,
   };
 }
 

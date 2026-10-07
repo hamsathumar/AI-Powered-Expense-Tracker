@@ -13,6 +13,12 @@
  *   GEMINI_API_KEY=... npx jest liveEval
  *   GEMINI_API_KEY=... GEMINI_MODEL=gemini-2.5-pro npx jest liveEval
  *   GEMINI_API_KEY=... EVAL_ONLY=EV-02,EV-11b npx jest liveEval
+ *   GEMINI_API_KEY=... EVAL_DELAY_MS=0 npx jest liveEval   # paid tier: no pacing
+ *
+ * Use the SAME model name the app has in Settings — an unknown or retired
+ * model answers 404 for every case. Requests are paced (default one every 7 s)
+ * so a free-tier key, limited to roughly 10 requests a minute, is not
+ * rate-limited part-way through.
  *
  * It runs inside jest rather than as a standalone script on purpose: ts-jest
  * already resolves the `@/` aliases and TypeScript, so this needs no extra
@@ -32,13 +38,23 @@ import { EVAL_CONTEXT, EVAL_CORPUS, EVAL_NOW } from './corpus';
 import { scoreCase } from './score';
 
 const API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+// Keep in step with DEFAULT_GEMINI_MODEL in db/queries/settings.ts (not imported:
+// that module loads expo-sqlite, which cannot run under plain node).
+const MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.5-flash-lite';
 const ONLY = (process.env.EVAL_ONLY ?? '')
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean);
 
-const CASES = ONLY.length > 0 ? EVAL_CORPUS.filter((c) => ONLY.includes(c.id)) : EVAL_CORPUS;
+/** Gap between requests; the free tier allows roughly 10 per minute. */
+const DELAY_MS = Number(process.env.EVAL_DELAY_MS ?? 7000);
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+let calls = 0;
+
+// Backstop cases replay a recorded BAD reading — nothing to measure live.
+const CASES = (ONLY.length > 0 ? EVAL_CORPUS.filter((c) => ONLY.includes(c.id)) : EVAL_CORPUS).filter(
+  (c) => !c.offlineOnly,
+);
 
 const PROMPT_CONTEXT: InterpretPromptContext = {
   accounts: EVAL_CONTEXT.accounts,
@@ -57,6 +73,7 @@ live(`live eval against ${MODEL}`, () => {
     it(
       label,
       async () => {
+        if (calls++ > 0 && DELAY_MS > 0) await pause(DELAY_MS);
         const output = await interpretTextWithGemini({
           apiKey: API_KEY!,
           model: MODEL,

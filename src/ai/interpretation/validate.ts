@@ -295,6 +295,103 @@ function toConflicts(raw: unknown): Conflict[] {
     .filter((c): c is Conflict => c !== null);
 }
 
+// ── V1.3: action-vs-label is APP-OWNED (TC-028, TC-036) ──────────────────
+/** Transaction-type words, so a label can be checked for actually naming a
+ *  TYPE. "label it as fruits" names nothing; "record it as income" does. */
+const TYPE_WORDS: [RegExp, OrdinaryKind][] = [
+  [/\b(income|earn(?:ed|ing|ings)?)\b/i, 'income'],
+  [/\b(expenses?|spen(?:t|d|ding))\b/i, 'expense'],
+  [/\btransfer(?:s|red|ring)?\b/i, 'transfer'],
+  [/\b(lend(?:ing)?|lent|loans?|borrow(?:ed|ing)?|repa(?:y|id|yment))\b/i, 'lending'],
+];
+
+/** The first transaction type named in `text` that differs from `operation`. */
+function otherTypeNamed(text: string | null, operation: OrdinaryKind): OrdinaryKind | null {
+  if (!text) return null;
+  const exact = normOrdinary(text);
+  if (exact) return exact !== operation ? exact : null;
+  for (const [pattern, kind] of TYPE_WORDS) {
+    if (kind !== operation && pattern.test(text)) return kind;
+  }
+  return null;
+}
+
+/**
+ * Final conflict list for one operation.
+ *
+ * An action-vs-label conflict is decided by the APP, like grounding: it exists
+ * only when the user asked for a DIFFERENT transaction type than the action
+ * they described — from the model's `requestedLabel`, or failing that from the
+ * model's own action_vs_label notes. The model's conflict objects themselves
+ * are never passed through, so:
+ *  - "label it as fruits" / "label it as Sham's share" (a NAME, not a type)
+ *    raises nothing (TC-036);
+ *  - the same contradiction reported by both the model and the app becomes
+ *    ONE conflict, not two (TC-028).
+ * Any other exact duplicate (same kind and note) is collapsed too.
+ */
+function finalizeConflicts(
+  modelConflicts: Conflict[],
+  operation: OrdinaryKind,
+  requestedLabel: string | null,
+): Conflict[] {
+  const modelLabelNotes = modelConflicts.filter((c) => c.kind === 'action_vs_label').map((c) => c.note);
+  const asked =
+    otherTypeNamed(requestedLabel, operation) ??
+    modelLabelNotes.map((note) => otherTypeNamed(note, operation)).find((k) => k !== null) ??
+    null;
+
+  const out: Conflict[] = [];
+  const seen = new Set<string>();
+  const add = (c: Conflict) => {
+    const key = `${c.kind}\u0000${c.note}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(c);
+  };
+  if (asked) {
+    add({
+      kind: 'action_vs_label',
+      note: `Described action is "${operation}" but the input asked to record it as "${asked}".`,
+    });
+  }
+  for (const c of modelConflicts) if (c.kind !== 'action_vs_label') add(c);
+  return out;
+}
+
+/**
+ * V1.3 (TC-029, TC-031, TC-035): for income and lending the user's account is
+ * where the money LANDED ("to cash", "into BOC"), and the model regularly puts
+ * that in `toAccount` — a field only transfers read, so the account was
+ * silently lost. When `account` is empty and `toAccount` names something, the
+ * reference the model actually heard is used. Nothing is invented.
+ */
+function accountSource(src: Record<string, unknown>, operation: OrdinaryKind | 'unknown'): unknown {
+  if (operation !== 'income' && operation !== 'lending') return src.account;
+  if (asString(asObject(src.account).reference)) return src.account;
+  return asString(asObject(src.toAccount).reference) ? src.toAccount : src.account;
+}
+
+/** A dictated note: free text, so it gets the same injection check as a name
+ *  (instruction-like text is never content) and a sane length cap. */
+function toNote(raw: unknown): string | null {
+  const text = asString(raw)?.replace(/\s+/g, ' ').trim() ?? '';
+  if (!text) return null;
+  const safe = sanitiseName(text);
+  return safe ? safe.slice(0, 200) : null;
+}
+
+/** "me" / "I" / "myself" as the payer means the user paid — no pair needed. */
+const SELF_REFERENCE = /^(me|i|myself|my\s*self|mine|us|we)$/i;
+
+/** Expense only: who paid instead of the user (V1.3, TC-039). */
+function toPayer(raw: unknown, operation: OrdinaryKind, dropped: string[]): EntityRef | null {
+  if (operation !== 'expense') return null;
+  const ref = toRefOrNull(raw, dropped);
+  if (!ref?.reference || SELF_REFERENCE.test(ref.reference.trim())) return null;
+  return ref;
+}
+
 /**
  * Name an operation (TC-023 / TC-024). Delegates to the app-owned naming
  * module: injected text is stripped, an uninformative name (the model echoing
@@ -371,7 +468,15 @@ export function validateInterpretation(
    */
   const unresolvedDateConflict = (date: DateExpr): Conflict | null => {
     if (!date.expression) return null;
-    if (resolveDateExpression(date.expression, now).resolved) return null;
+    const resolution = resolveDateExpression(date.expression, now);
+    if (resolution.resolved && resolution.timeNeedsConfirm) {
+      // V1.3 (TC-033): the day is understood, the hour could be am or pm.
+      return {
+        kind: 'date_unresolved',
+        note: `“${date.expression}” — morning or evening? Set the time before approving.`,
+      };
+    }
+    if (resolution.resolved) return null;
     return {
       kind: 'date_unresolved',
       note: `Couldn't turn “${date.expression}” into a date — approving records it on the day it was spoken. Confirm, or reject and re-enter with the date.`,
@@ -384,9 +489,10 @@ export function validateInterpretation(
     amount: Amount,
     reason: RejectionReason,
   ) => {
-    const account = toRefOrNull(src.account);
+    const account = toRefOrNull(accountSource(src, operation));
     const category = toRefOrNull(src.category);
     const person = toRefOrNull(src.person);
+    const direction = operation === 'lending' ? normDirection(src.direction) : null;
     unqualified.push({
       localId: nextId('uq'),
       operation,
@@ -394,6 +500,7 @@ export function validateInterpretation(
       account,
       category,
       person,
+      direction,
       date: toDate(src.dateExpression),
       // Named like any other operation so it is readable in the queue (F3).
       name: nameFor(src.name, {
@@ -401,7 +508,9 @@ export function validateInterpretation(
         categoryReference: category?.reference,
         personReference: person?.reference,
         accountReference: account?.reference,
+        direction,
       }),
+      note: toNote(src.note),
       evidence: toEvidence(src.evidence),
       rejectionReason: reason,
       promoted: false,
@@ -428,27 +537,21 @@ export function validateInterpretation(
     }
 
     const isExpInc = operation === 'expense' || operation === 'income';
-    const conflicts = toConflicts(src.conflicts);
+    const requestedLabelRaw = asString(src.requestedLabel);
+    const requestedLabel = requestedLabelRaw?.trim().toLowerCase() ?? null;
+    const conflicts = finalizeConflicts(toConflicts(src.conflicts), operation, requestedLabel);
     if (promoted.conflict) conflicts.push(promoted.conflict);
     const uncertain = ambiguousAmountConflict(amount);
     if (uncertain) conflicts.push(uncertain);
-    const requestedLabelRaw = asString(src.requestedLabel);
-    const requestedLabel = requestedLabelRaw?.trim().toLowerCase() ?? null;
-    const normalizedLabel = normOrdinary(requestedLabel);
-    if (normalizedLabel && normalizedLabel !== operation) {
-      conflicts.push({
-        kind: 'action_vs_label',
-        note: `Described action is "${operation}" but the input asked to record it as "${normalizedLabel}".`,
-      });
-    }
 
     const dropped: string[] = [];
-    const account = toRef(src.account, dropped);
+    const account = toRef(accountSource(src, operation), dropped);
     const toAccount = operation === 'transfer' ? toRef(src.toAccount, dropped) : null;
     const category = isExpInc ? toRef(src.category, dropped) : null;
     const person =
       operation === 'lending' ? toRef(src.person, dropped) : toRefOrNull(src.person, dropped);
     const direction = operation === 'lending' ? normDirection(src.direction) : null;
+    const paidBy = toPayer(src.paidBy, operation, dropped);
     if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
 
     const date = toDate(src.dateExpression);
@@ -474,6 +577,8 @@ export function validateInterpretation(
         accountReference: account.reference,
         direction,
       }),
+      note: toNote(src.note),
+      paidBy,
       conflicts,
       evidence: toEvidence(src.evidence),
     });
@@ -487,13 +592,16 @@ export function validateInterpretation(
   ) => {
     const isExpInc = operation === 'expense' || operation === 'income';
     const dropped: string[] = [];
-    const account = toRef(src.account, dropped);
+    const account = toRef(accountSource(src, operation), dropped);
     const toAccount = operation === 'transfer' ? toRef(src.toAccount, dropped) : null;
     const category = isExpInc ? toRef(src.category, dropped) : null;
     const person =
       operation === 'lending' ? toRef(src.person, dropped) : toRefOrNull(src.person, dropped);
     const direction = operation === 'lending' ? normDirection(src.direction) : null;
-    const conflicts = [...toConflicts(src.conflicts), ...extraConflicts];
+    const conflicts = [
+      ...finalizeConflicts(toConflicts(src.conflicts), operation, asString(src.requestedLabel)),
+      ...extraConflicts,
+    ];
     if (dropped.length > 0) conflicts.push(droppedRefNote(dropped));
     const uncertain = ambiguousAmountConflict(amount);
     if (uncertain) conflicts.push(uncertain);
@@ -521,6 +629,8 @@ export function validateInterpretation(
         accountReference: account.reference,
         direction,
       }),
+      note: toNote(src.note),
+      paidBy: toPayer(src.paidBy, operation, dropped),
       conflicts,
       evidence: toEvidence(src.evidence),
     });
@@ -553,7 +663,7 @@ export function validateInterpretation(
       const payer = toRefOrNull(src.payerRef ?? src.payer, dropped);
       const account = toRefOrNull(src.account, dropped);
       const category = toRefOrNull(src.category, dropped);
-      const conflicts = toConflicts(src.conflicts);
+      const conflicts = finalizeConflicts(toConflicts(src.conflicts), 'expense', asString(src.requestedLabel));
       if (promotedTotal.conflict) conflicts.push(promotedTotal.conflict);
       const uncertainTotal = ambiguousAmountConflict(total);
       if (uncertainTotal) conflicts.push(uncertainTotal);
@@ -615,12 +725,12 @@ export function validateInterpretation(
         return;
       }
       const dropped: string[] = [];
-      const account = toRefOrNull(src.account, dropped);
+      const account = toRefOrNull(accountSource(src, op), dropped);
       const toAccount = op === 'transfer' ? toRefOrNull(src.toAccount, dropped) : null;
       const category = op === 'expense' || op === 'income' ? toRefOrNull(src.category, dropped) : null;
       const person = op === 'lending' ? toRefOrNull(src.person, dropped) : null;
       const direction = op === 'lending' ? normDirection(src.direction) : null;
-      const conflicts = toConflicts(src.conflicts);
+      const conflicts = finalizeConflicts(toConflicts(src.conflicts), op, asString(src.requestedLabel));
       if (promotedBase.conflict) conflicts.push(promotedBase.conflict);
       const uncertainBase = ambiguousAmountConflict(base);
       if (uncertainBase) conflicts.push(uncertainBase);
@@ -693,6 +803,161 @@ export function validateInterpretation(
     return false;
   });
 
+  // ── V1.3 (TC-038): one voiced intent, one queue item ───────────────────
+  // The model can list the same amountless intent in BOTH `candidates` (with a
+  // null amount) and `unqualifiedIntents`; both arrays are read, so a single
+  // "spent … on samosas" produced two identical "Amount needed" cards. An
+  // unqualified intent is dropped when it repeats one already kept, or repeats
+  // a qualified candidate (same type and name, compatible references). Two
+  // genuinely different intents — different names or entities — both survive.
+  const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const keptUnqualified: UnqualifiedIntent[] = [];
+  for (const u of unqualified) {
+    const twin =
+      keptUnqualified.find(
+        (k) =>
+          k.operation === u.operation &&
+          sameName(k.name, u.name) &&
+          sameReference(k.category?.reference ?? null, u.category?.reference ?? null) &&
+          sameReference(k.account?.reference ?? null, u.account?.reference ?? null) &&
+          sameReference(k.person?.reference ?? null, u.person?.reference ?? null),
+      ) ??
+      deduped.find(
+        (c) =>
+          c.operation === u.operation &&
+          sameName(c.name, u.name) &&
+          sameReference(c.category?.reference ?? null, u.category?.reference ?? null) &&
+          sameReference(c.person?.reference ?? null, u.person?.reference ?? null),
+      );
+    if (twin) {
+      issues.push(`suppressed unqualified ${u.operation} intent "${u.name}" duplicating ${twin.localId}`);
+      continue;
+    }
+    keptUnqualified.push(u);
+  }
+
+  // ── V1.3 (TC-034, Critical): a number inside a NOTE is not a transaction ─
+  // "Transfer 5,000 from Room to BOC, add a note: 200 left" produced a second,
+  // spurious "Note" expense of Rs200. The note is read from the user's own
+  // words; any operation whose amount appears ONLY inside it is flagged with a
+  // blocking conflict (never silently dropped — the user rejects it), and the
+  // note is attached to the real operation when there is exactly one.
+  const dictated = userNote(transcript);
+  if (dictated) {
+    const outside = transcript.replace(dictated.span, ' ');
+    const digitsIn = (minor: number | null) => (minor === null ? null : String(Math.round(minor / 100)));
+    const appearsOnlyInNote = (minor: number | null) => {
+      const d = digitsIn(minor);
+      if (!d) return false;
+      const re = new RegExp(`(^|\\D)${d}(\\D|$)`);
+      return re.test(dictated.text.replace(/,/g, '')) && !re.test(outside.replace(/,/g, ''));
+    };
+    const real: OrdinaryCandidate[] = [];
+    for (const c of deduped) {
+      if (appearsOnlyInNote(c.amount.valueMinor)) {
+        c.conflicts.push({
+          kind: 'note_not_transaction',
+          note: `“${dictated.text}” is the note you dictated — this ${c.amount.valueMinor! / 100} is part of it, not a separate transaction. Reject this one unless it really is.`,
+        });
+        issues.push('operation built from a number inside a dictated note was flagged');
+      } else {
+        real.push(c);
+      }
+    }
+    const realOps = real.length + specialized.length + keptUnqualified.length;
+    if (realOps === 1) {
+      const target = real[0] ?? keptUnqualified[0];
+      if (target && !target.note) target.note = dictated.text.slice(0, 200);
+    }
+  }
+
+  // ── V1.3 (TC-032): withdrawing cash is not spending ────────────────────
+  // An ATM withdrawal moves money from a bank into cash in hand — a transfer.
+  // If one still arrives typed as an EXPENSE, the app does not retype it (the
+  // type is the user's to confirm), but it blocks with a plain question so it
+  // can never inflate spending through "Approve now".
+  if (WITHDRAWAL.test(transcript)) {
+    const looksLikeWithdrawal = (c: OrdinaryCandidate) =>
+      WITHDRAWAL.test(c.name) || c.evidence.some((e) => WITHDRAWAL.test(e.sourceText)) || deduped.length === 1;
+    for (const c of deduped) {
+      if (c.operation === 'expense' && looksLikeWithdrawal(c) && !c.conflicts.some((x) => x.kind === 'type_unconfirmed')) {
+        c.conflicts.push({
+          kind: 'type_unconfirmed',
+          note: 'Withdrawing cash moves money into your Cash account — that is a transfer, not spending. Change the type, or confirm if this really was a purchase.',
+        });
+      }
+    }
+  }
+
+  // ── V1.3 (TC-036): "label it as fruits" is the NAME the user chose ────
+  // Read straight from the user's words, so it holds whatever the model did
+  // with the instruction. Only when the utterance yields exactly ONE
+  // operation — with several, the words cannot be tied to one of them here
+  // (the prompt handles that case). A label naming a transaction TYPE
+  // ("label it as income") is not a name: that stays an action-vs-label
+  // conflict. Instruction-like text is never adopted (sanitiseName).
+  const instruction = userLabelInstruction(transcript);
+  const label = instruction?.label ?? null;
+  const total = deduped.length + specialized.length + keptUnqualified.length;
+
+  // ── V1.3 (device round, "label it as Shamsiya"): a label is never a conflict
+  // The model sometimes turns the user's label into a vague conflict ("Shamsiya
+  // is not a known entity"), which blocks the item and names nothing. Any
+  // MODEL conflict that merely restates the label is dropped — app-owned kinds
+  // (type contradiction, injection) are never touched. The operation the model
+  // attached it to is exactly where the label belongs, so with several
+  // operations that pinpoints which one to name.
+  if (label) {
+    const needle = label.toLowerCase();
+    const restates = (c: Conflict) =>
+      c.kind !== 'action_vs_label' && c.kind !== 'injection_suspected' && c.note.toLowerCase().includes(needle);
+    const holders = [...deduped, ...specialized].filter((op) => op.conflicts.some(restates));
+    for (const op of holders) {
+      op.conflicts = op.conflicts.filter((c) => !restates(c));
+      issues.push('dropped a model conflict that only restated the user\'s label');
+    }
+    const safe = sanitiseName(label);
+    if (total > 1 && holders.length === 1 && safe && !otherTypeNamed(label, holders[0]!.operation)) {
+      holders[0]!.name = resolveName(safe, { operation: holders[0]!.operation }, sanitiseName);
+    }
+  }
+  if (label && total === 1) {
+    const target = (deduped[0] ?? specialized[0] ?? keptUnqualified[0]) as
+      | OrdinaryCandidate
+      | SpecializedOperation
+      | UnqualifiedIntent;
+    const op: OrdinaryKind = target.operation === 'unknown' ? 'expense' : target.operation;
+    // A type named by the label itself ("label it as income") or by the noun
+    // the user called it ("name THE EXPENSE as rent provision", said of an
+    // income — TC-028). Either is a type contradiction to confirm once; a
+    // noun-only contradiction still lets the label become the name.
+    const askedType = otherTypeNamed(label, op);
+    const calledType = instruction?.noun ? otherTypeNamed(instruction.noun, op) : null;
+    if (!askedType && calledType && 'conflicts' in target && !target.conflicts.some((c) => c.kind === 'action_vs_label')) {
+      target.conflicts.push({
+        kind: 'action_vs_label',
+        note: `Described action is "${op}" but the input called it "${calledType}". Confirm the type.`,
+      });
+    }
+    if (askedType) {
+      // "label it as income" on a spend: a TYPE contradiction, said in the
+      // user's own words — raise it even if the model reported nothing.
+      // (An amountless intent has no conflicts yet; it is blocked anyway.)
+      if ('conflicts' in target && !target.conflicts.some((c) => c.kind === 'action_vs_label')) {
+        target.conflicts.push({
+          kind: 'action_vs_label',
+          note: `Described action is "${op}" but the input asked to record it as "${askedType}".`,
+        });
+      }
+    } else if (!normOrdinary(label)) {
+      const safe = sanitiseName(label);
+      if (safe) {
+        target.name = resolveName(safe, { operation: op }, sanitiseName);
+        issues.push('name taken from the label the user asked for');
+      }
+    }
+  }
+
   // Injection backstop: flag every qualified operation for mandatory review.
   if (detectInjection(transcript)) {
     for (const c of deduped) {
@@ -715,9 +980,51 @@ export function validateInterpretation(
     transcript,
     candidates: deduped,
     specializedOperations: specialized,
-    unqualifiedIntents: unqualified,
+    unqualifiedIntents: keptUnqualified,
     issues,
   };
+}
+
+/**
+ * "label it as fruits", "name the expense as rent provision", "call it Sham's
+ * share" → the label. The capture stops at the end of the clause, or at a
+ * connective that starts the next thought ("… as Sham's share on lunch" →
+ * "Sham's share"). Five words at most — a longer capture is a sentence, not a
+ * label. Null when there is no such instruction.
+ */
+const LABEL_INSTRUCTION =
+  /\b(?:label|name|call|title)\s+(?:it|this|that|the\s+(expense|income|transaction|payment|transfer|loan|entry|item|purchase|bill))?\s*(?:as|to)?\s+(?!(?:of|is|was)\b)["“']?([^,.;!?"”]+?)["”']?\s*(?=[,.;!?]|$|\s(?:and|then|from|on|in|with|using|for|by)\b)/i;
+
+/** The label, plus the noun the user used for the transaction ("name THE
+ *  EXPENSE as …"), which can itself contradict the action (TC-028). */
+export function userLabelInstruction(transcript: string): { label: string; noun: string | null } | null {
+  const m = transcript.match(LABEL_INSTRUCTION);
+  const label = m?.[2]?.trim() ?? '';
+  if (!label || label.split(/\s+/).length > 5) return null;
+  return { label, noun: m?.[1]?.toLowerCase() ?? null };
+}
+
+export function userLabel(transcript: string): string | null {
+  return userLabelInstruction(transcript)?.label ?? null;
+}
+
+/** Cash leaving a bank by withdrawal (TC-032). */
+const WITHDRAWAL = /\b(withdr[ae]w[ns]?|withdrawals?|withdrawing|atm)\b/i;
+
+/**
+ * A note the user dictated: "add (an optional) note as 200 left", "with a note
+ * saying …", "note: …". A cue is required — "a note book for 200" is not a
+ * note. Returns the note text and the exact span it was read from.
+ */
+const NOTE_INSTRUCTION =
+  /(?:\b(?:add|with|put|attach|include|optional)\b(?:\s+\w+){0,2}?\s+note\b\s*(?:as|saying|that\s+says|that|:|-)?|\bnote\s*(?:as|saying|that\s+says|:|-))\s*["“']?([^"”.;!?]+?)["”']?\s*(?=[.;!?]|$)/i;
+
+export function userNote(transcript: string): { text: string; span: string } | null {
+  const m = transcript.match(NOTE_INSTRUCTION);
+  const text = m?.[1]?.trim() ?? '';
+  if (!m || !text) return null;
+  const safe = sanitiseName(text);
+  return safe ? { text: safe, span: m[0] } : null;
 }
 
 /** Two textual references agree when they are equal, or either is absent. */

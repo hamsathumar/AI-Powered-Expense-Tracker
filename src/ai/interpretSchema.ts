@@ -112,7 +112,8 @@ const candidate = {
     requestedLabel: {
       type: 'STRING',
       nullable: true,
-      description: 'A type the user asked for, when it contradicts the described action.',
+      description:
+        'ONLY a transaction TYPE (income/expense/transfer/lending) the user asked for that contradicts the action. A name or label ("label it as fruits") goes in name, never here.',
     },
     amount,
     account: entityRef,
@@ -122,6 +123,15 @@ const candidate = {
     direction: { type: 'STRING', enum: DIRECTIONS },
     dateExpression,
     name: { type: 'STRING', description: 'Short Title Case name for what the money was for.' },
+    note: {
+      type: 'STRING',
+      nullable: true,
+      description: 'A note the user dictated for this transaction ("add a note: 200 left"). Never a transaction itself.',
+    },
+    paidBy: {
+      ...entityRef,
+      description: 'Expense only: the person who paid for the user\'s expense ("Sham paid for my dinner").',
+    },
     evidence,
     conflicts,
   },
@@ -216,20 +226,27 @@ const unqualified = {
   description: 'A financial intent the user voiced with NO resolvable amount. Preserved, not turned into a transaction.',
   properties: {
     operation: { type: 'STRING', enum: ORDINARY },
+    // V1.3: without these a schema-constrained reply could not say which way
+    // an amountless repayment went, or where the money landed (TC-031/035).
+    direction: { type: 'STRING', enum: DIRECTIONS },
     amount,
     account: entityRef,
+    toAccount: entityRef,
     category: entityRef,
     person: entityRef,
     dateExpression,
     name: { type: 'STRING' },
+    note: { type: 'STRING', nullable: true },
     evidence,
     rejectionReason: { type: 'STRING', enum: ['NO_TRANSACTION_VALUE_DETECTED'] },
   },
   required: ['amount', 'rejectionReason'],
   propertyOrdering: [
     'operation',
+    'direction',
     'amount',
     'account',
+    'toAccount',
     'category',
     'person',
     'dateExpression',

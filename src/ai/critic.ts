@@ -28,6 +28,7 @@
 import { callGemini } from '@/ai/geminiInterpret';
 import { CRITIQUE_RESPONSE_SCHEMA } from '@/ai/interpretSchema';
 import type { ValidatedInterpretation } from '@/ai/interpretation/types';
+import { userNote } from '@/ai/interpretation/validate';
 
 export interface CritiqueClaim {
   amountExpression: string;
@@ -79,8 +80,13 @@ export function shouldCritique(transcript: string, interpretation: ValidatedInte
   if (!transcript.trim()) return false;
   const produced = interpretation.candidates.length + interpretation.specializedOperations.length;
   const accountedFor = produced + interpretation.unqualifiedIntents.length;
+  // Numbers inside a dictated note ("add a note: 200 left") are not sums of
+  // money to account for — counting them is how TC-034's spurious second
+  // transaction most likely got asked for (V1.3).
+  const note = userNote(transcript);
+  const spoken = note ? transcript.replace(note.span, ' ') : transcript;
   // More sums mentioned than readings produced is the exact shape of a drop.
-  if (countMoneyMentions(transcript) > accountedFor) return true;
+  if (countMoneyMentions(spoken) > accountedFor) return true;
   // Long, rambling input: the failure mode the user reports most often.
   return wordCount(transcript) >= 30 && produced >= 1;
 }
@@ -189,6 +195,8 @@ const CRITIC_SYSTEM_INSTRUCTION = [
   'RULES:',
   '- Report only money that literally appears in the TRANSCRIPT. Never invent an amount, and never adjust one.',
   '- Quantities that are not money are NOT missing sums: "for the next 3 months", "for 4 people", "3 times".',
+  '- Numbers inside a NOTE the user dictated ("add a note: 200 left", "balance 50 remaining") are NOT missing sums — the note belongs to its transaction.',
+  '- An expense someone else paid ("Sham paid 280 for my dinner", recorded with paidBy) is ONE sum, not missing a lending entry.',
   '- An amount the interpretation kept as an unqualified intent IS accounted for. So is one deliberately covered by a bill split or a recurring schedule instead of a plain transaction.',
   '- A single sum referred to twice ("I transferred that amount") is ONE sum, not two.',
   '- Do NOT rewrite the interpretation, do not suggest categories or accounts, and do not comment on anything except money coverage.',

@@ -21,7 +21,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { Amount } from '@/components/Amount';
-import { commitPendingOperation, type EvaluatedPending } from '@/ai/commitOperation';
+import {
+  commitPendingOperation,
+  confirmAndCommitPendingOperation,
+  type EvaluatedPending,
+} from '@/ai/commitOperation';
+import { confirmableInline, describeIssues } from '@/ai/interpretation/issues';
 import { lendingPresentation } from '@/domain/lendingPresentation';
 import type { PendingOutcome } from '@/state/pendingOutcomes';
 import { hapticSuccess, hapticTick } from '@/lib/haptics';
@@ -84,8 +89,20 @@ function chipsFor(op: EvaluatedPending['op']): ChipSpec[] {
       label: op.direction ? lendingPresentation(op.direction).kind : 'Direction needed',
       missing: !op.direction,
     });
+    // Lending moves money in or out of an account too — show which (V1.3).
+    chips.push({ ...ref(op.account, 'Account needed'), icon: 'credit-card' });
+  }
+  // V1.3: someone else paid (recorded as a borrow + this expense), and any
+  // note the user dictated — shown so neither is a surprise after approval.
+  if (op.kind === 'expense' && op.paidBy) {
+    chips.push(
+      op.paidBy.status === 'resolved' && op.paidBy.reference
+        ? { icon: 'user', label: `Paid by ${op.paidBy.reference}` }
+        : { icon: 'user', label: 'Who paid?', missing: true },
+    );
   }
   chips.push({ icon: 'calendar', label: dateLabel(op.dateExpression) });
+  if (op.note) chips.push({ icon: 'file-text', label: op.note });
   return chips;
 }
 
@@ -135,10 +152,10 @@ export function ConfirmCard({
   const chips = chipsFor(op);
   const typeColor = colors[op.operation];
 
-  const approveNow = () => {
+  const approveNow = (commit: (id: string) => ReturnType<typeof commitPendingOperation> = commitPendingOperation) => {
     setStatus('committing');
     setError(null);
-    commitPendingOperation(item.id)
+    commit(item.id)
       .then((res) => {
         if (res.committed) {
           setStatus('approved');
@@ -217,6 +234,19 @@ export function ConfirmCard({
 
       {error ? <Text style={[type.caption, { color: colors.expense }]}>{error}</Text> : null}
 
+      {/* TC-040: what is holding this item back, said HERE — the first screen
+          the user sees — in the same words as the Home queue and review screen. */}
+      {!outcome && !specialized && blocked ? (
+        <View style={styles.issues}>
+          {describeIssues(gate).map((issue) => (
+            <View key={issue.message} style={styles.issueRow}>
+              <Feather name="alert-circle" size={13} color={isDark ? colors.warning : colors.lending} />
+              <Text style={[type.caption, styles.issueText, { color: colors.text }]}>{issue.message}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       {/* Action */}
       {outcome ? (
         <View style={[styles.approvedRow]}>
@@ -233,13 +263,39 @@ export function ConfirmCard({
           <Feather name="edit-2" size={15} color={colors.primary} />
           <Text style={[styles.actionLabel, { color: colors.primary }]}>Open editor</Text>
         </Pressable>
+      ) : blocked && confirmableInline(gate) ? (
+        // Only confirmations stand in the way, and they are listed just above:
+        // confirm them here rather than on another screen (V1.3).
+        <View style={styles.dualAction}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Confirm and approve"
+            disabled={status === 'committing'}
+            onPress={() => approveNow(confirmAndCommitPendingOperation)}
+            style={[styles.action, styles.actionPrimary, { backgroundColor: colors.positiveFill }]}>
+            <Feather name="check" size={15} color={colors.onFilled} />
+            <Text style={[styles.actionLabel, { color: colors.onFilled }]}>
+              {status === 'committing' ? 'Approving…' : 'Confirm & approve'}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Review in queue"
+            onPress={() => {
+              hapticTick();
+              onOpenReview(item);
+            }}
+            style={[styles.action, styles.actionSecondary, { borderColor: colors.border }]}>
+            <Text style={[styles.actionLabel, { color: colors.textMuted }]}>Review</Text>
+          </Pressable>
+        </View>
       ) : blocked ? (
         <Pressable
           accessibilityRole="button"
           onPress={() => onOpenReview(item)}
           style={[styles.action, { backgroundColor: colors.surfaceAlt }]}>
           <Feather name="sliders" size={15} color={colors.text} />
-          <Text style={[styles.actionLabel, { color: colors.text }]}>Finish details in queue</Text>
+          <Text style={[styles.actionLabel, { color: colors.text }]}>Finish details</Text>
         </Pressable>
       ) : (
         <View style={styles.dualAction}>
@@ -247,7 +303,7 @@ export function ConfirmCard({
             accessibilityRole="button"
             accessibilityLabel="Approve now"
             disabled={status === 'committing'}
-            onPress={approveNow}
+            onPress={() => approveNow()}
             style={[styles.action, styles.actionPrimary, { backgroundColor: colors.positiveFill }]}>
             <Feather name="check" size={15} color={colors.onFilled} />
             <Text style={[styles.actionLabel, { color: colors.onFilled }]}>
@@ -301,6 +357,9 @@ const styles = StyleSheet.create({
     maxWidth: 200,
   },
   chipLabel: { fontFamily: fontFamily.medium, fontSize: 12.5 },
+  issues: { gap: space.xs },
+  issueRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.xs + 2 },
+  issueText: { flex: 1 },
   approvedRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs + 2, paddingVertical: space.xs },
   approvedLabel: { fontFamily: fontFamily.medium, fontSize: 14 },
   dualAction: { flexDirection: 'row', gap: space.sm },

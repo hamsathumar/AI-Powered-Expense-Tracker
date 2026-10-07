@@ -35,6 +35,7 @@ import { evaluatePendingByIds, type EvaluatedPending } from '@/ai/commitOperatio
 import { hasGeminiApiKey } from '@/ai/secureConfig';
 import type { VoiceJob } from '@/db/queries/voiceJobs';
 import { ConfirmCard } from '@/components/voice/ConfirmCard';
+import { VoiceDiagnosticsSheet } from '@/components/voice/VoiceDiagnosticsSheet';
 import { VoiceOrb, type OrbPhase } from '@/components/voice/VoiceOrb';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useVoiceCapture, type CaptureResult } from '@/hooks/useVoiceCapture';
@@ -89,6 +90,7 @@ export default function VoiceScreen() {
   const [retryUri, setRetryUri] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [whyOpen, setWhyOpen] = useState(false);
   const [copyIndex, setCopyIndex] = useState(0);
   const listenStartRef = useRef(0);
 
@@ -308,6 +310,10 @@ export default function VoiceScreen() {
   if (phase === 'success' && job) {
     const shownTranscript = job.resultTranscript || job.transcript;
     const total = cards.length;
+    // Counted from the LIVE cards, not from what the parse first heard: a
+    // whole-balance repayment arrives with its amount already filled, and an
+    // amount typed on the review screen should make the pill go away.
+    const needsAmount = cards.filter((c) => c.state === 'pending' && c.item.op.amountMinor === null).length;
     const nothing = total === 0;
     const heading = nothing ? 'Nothing logged' : total > 1 ? `${total} logged` : 'Logged';
 
@@ -329,7 +335,20 @@ export default function VoiceScreen() {
               </Text>
             ) : null}
           </View>
+          {job.diagnostics ? (
+            // Phase C: what happened inside this capture, on request.
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Why it read this way"
+              onPress={() => setWhyOpen(true)}
+              hitSlop={space.sm}
+              style={[styles.whyButton, { backgroundColor: colors.surfaceAlt }]}>
+              <Feather name="info" size={14} color={colors.primary} />
+              <Text style={[type.label, { color: colors.primary }]}>Why?</Text>
+            </Pressable>
+          ) : null}
         </View>
+        <VoiceDiagnosticsSheet diagnostics={job.diagnostics} visible={whyOpen} onClose={() => setWhyOpen(false)} />
 
         <ScrollView
           contentContainerStyle={styles.successScroll}
@@ -353,13 +372,13 @@ export default function VoiceScreen() {
             ))
           )}
 
-          {job.unqualifiedCount > 0 ? (
+          {needsAmount > 0 ? (
             <View style={[styles.hintPill, { borderColor: colors.warning }]}>
               <Feather name="alert-circle" size={13} color={isDark ? colors.warning : colors.lending} />
               <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
-                {job.unqualifiedCount === 1
+                {needsAmount === 1
                   ? '1 needs an amount before it counts'
-                  : `${job.unqualifiedCount} need an amount before they count`}
+                  : `${needsAmount} need an amount before they count`}
               </Text>
             </View>
           ) : null}
@@ -634,6 +653,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   successHeadingWrap: { flex: 1, gap: 2 },
+  whyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    alignSelf: 'flex-start',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+  },
   successScroll: { paddingHorizontal: screenPaddingH, paddingBottom: space.xl, gap: space.md },
   hintPill: {
     flexDirection: 'row',

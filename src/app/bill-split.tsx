@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AmountInput } from '@/components/AmountInput';
 import { ChipSelector, type ChipItem } from '@/components/ChipSelector';
+import { DateTimeField } from '@/components/DateTimeField';
 import { PeoplePicker } from '@/components/PeoplePicker';
 import { initials } from '@/components/PersonRow';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -58,6 +59,8 @@ export default function BillSplitScreen() {
   const [method, setMethod] = useState<'equal' | 'custom'>('equal');
   const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  // TC-037: a split can happen on any day, like every other transaction.
+  const [occurredAt, setOccurredAt] = useState(() => new Date());
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -87,7 +90,7 @@ export default function BillSplitScreen() {
           prefilledRef.current = true;
           const rec = await getPendingOperation(fromPending);
           if (rec) {
-            const pre = buildBillSplitPrefill(rec.op, ppl);
+            const pre = buildBillSplitPrefill(rec.op, ppl, new Date(rec.createdAt));
             setName(pre.name);
             setAmountText(pre.amountText);
             setAccountId(pre.accountId);
@@ -95,6 +98,8 @@ export default function BillSplitScreen() {
             setParticipantIds(pre.participantIds);
             setPayerId(pre.payerId);
             setUnresolvedNames(pre.unresolvedNames);
+            setOccurredAt(new Date(pre.occurredAt));
+            if (pre.dateNote) Alert.alert('Check the date', pre.dateNote);
           }
         }
       })
@@ -161,7 +166,7 @@ export default function BillSplitScreen() {
       const rows = generateBillSplitTransactions({
         billSplitId: Crypto.randomUUID(),
         name: name.trim(),
-        occurredAt: new Date().toISOString(),
+        occurredAt: occurredAt.toISOString(),
         accountId,
         categoryId,
         totalMinor,
@@ -214,6 +219,12 @@ export default function BillSplitScreen() {
 
           {/* 2. Total */}
           <AmountInput value={amountText} onChange={setAmountText} label="Total" />
+
+          {/* When — TC-037: a bill split on an earlier day is recorded on that day. */}
+          <View style={styles.fieldGroup}>
+            <Text style={[type.label, { color: colors.textMuted }]}>When</Text>
+            <DateTimeField value={occurredAt} onChange={setOccurredAt} />
+          </View>
 
           {/* 3. Paid from */}
           <ChipSelector

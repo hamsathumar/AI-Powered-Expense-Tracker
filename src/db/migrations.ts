@@ -276,6 +276,19 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // ── v9 — voice diagnostics (Transaction AI V1.3, Phase C) ──
+    // What Gemini returned, what the app's checks adjusted, and whether the
+    // critic re-read the sentence — kept as one JSON record per capture so a
+    // misreading can be explained by looking, not guessing. Not financial
+    // data; only the latest captures keep one (see markVoiceJobDone).
+    version: 9,
+    up: async (db) => {
+      await db.execAsync(`
+        ALTER TABLE voice_jobs ADD COLUMN diagnostics TEXT;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

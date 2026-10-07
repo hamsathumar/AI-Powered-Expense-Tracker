@@ -18,6 +18,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AmountInput } from '@/components/AmountInput';
 import { DateTimeField } from '@/components/DateTimeField';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { VoiceDiagnosticsSheet } from '@/components/voice/VoiceDiagnosticsSheet';
+import type { VoiceDiagnostics } from '@/ai/diagnostics';
+import { getVoiceJob } from '@/db/queries/voiceJobs';
 import { commitPendingOperation, rejectPendingOperation } from '@/ai/commitOperation';
 import { resolveDateExpression } from '@/ai/interpretation/dates';
 import { evaluateApproval } from '@/ai/interpretation/gate';
@@ -89,6 +92,20 @@ function Group({
   );
 }
 
+/** "Heard 'Nusky' — did you mean Nuski?" (audit F10). Declared at module
+ *  scope — a component created inside render would remount every render. */
+function Suggestion({ refValue, colors }: { refValue: ResolvedRef | null | undefined; colors: ThemeColors }) {
+  if (!refValue || refValue.status !== 'ambiguous' || refValue.options.length === 0 || !refValue.reference) {
+    return null;
+  }
+  const names = refValue.options.map((o) => o.name).join(', ');
+  return (
+    <Text style={[type.caption, { color: colors.textSubtle }]}>
+      Heard “{refValue.reference}” — did you mean {names}?
+    </Text>
+  );
+}
+
 export default function ReviewOperationScreen() {
   const { colors } = useTheme();
   const router = useRouter();
@@ -103,6 +120,10 @@ export default function ReviewOperationScreen() {
   // never has to round-trip through the operation.
   const [amountText, setAmountText] = useState('');
   const [nameText, setNameText] = useState('');
+  const [noteText, setNoteText] = useState('');
+  // Phase C: the capture this item came from, if it is still on record.
+  const [diagnostics, setDiagnostics] = useState<VoiceDiagnostics | null>(null);
+  const [whyOpen, setWhyOpen] = useState(false);
   const [date, setDate] = useState<Date | null>(null);
   const [capturedAt, setCapturedAt] = useState<Date>(() => new Date());
 
@@ -122,6 +143,12 @@ export default function ReviewOperationScreen() {
         setIncomeCats(ic);
         setPeople(ppl);
         setNameText(rec.op.name);
+        setNoteText(rec.op.note ?? '');
+        if (rec.op.voiceJobId) {
+          getVoiceJob(rec.op.voiceJobId)
+            .then((job) => setDiagnostics(job?.diagnostics ?? null))
+            .catch(() => {});
+        }
         setAmountText(rec.op.amountMinor === null ? '' : formatMinorUnits(rec.op.amountMinor).replace(/,/g, ''));
         // The date the operation currently means: its expression resolved
         // against the CAPTURE time, exactly as the commit path will read it.
@@ -147,8 +174,10 @@ export default function ReviewOperationScreen() {
     const amountChanged = parsedAmount !== null && parsedAmount !== op.amountMinor;
 
     const originalDate = new Date(resolveDateExpression(op.dateExpression, capturedAt).iso);
+    // Compared to the minute: since V1.3 a stated time is honoured, so a
+    // corrected TIME is a real edit (and answers a "morning or evening?" note).
     const dateChanged =
-      date !== null && format(date, 'yyyy-MM-dd') !== format(originalDate, 'yyyy-MM-dd');
+      date !== null && format(date, 'yyyy-MM-dd HH:mm') !== format(originalDate, 'yyyy-MM-dd HH:mm');
 
     // Editing a field IS the confirmation the matching conflict was asking
     // for, so those clear themselves; everything else needs "Keep as-is".
@@ -164,10 +193,11 @@ export default function ReviewOperationScreen() {
       // A figure the user typed is the strongest grounding there is.
       amountProvenance: amountChanged ? 'USER_EXPLICIT' : op.amountProvenance,
       name: nameText.trim() || op.name,
-      dateExpression: dateChanged ? format(date!, 'yyyy-MM-dd') : op.dateExpression,
+      note: noteText.trim() || null,
+      dateExpression: dateChanged ? format(date!, "yyyy-MM-dd'T'HH:mm") : op.dateExpression,
       conflicts,
     };
-  }, [op, amountText, nameText, date, capturedAt]);
+  }, [op, amountText, nameText, noteText, date, capturedAt]);
 
   const gate = useMemo(() => (editedOp ? evaluateApproval(editedOp) : null), [editedOp]);
 
@@ -197,19 +227,6 @@ export default function ReviewOperationScreen() {
    * ever offered, never applied: the ref stays ambiguous and the gate keeps
    * blocking until the user actually picks one.
    */
-  const suggestionFor = (ref: ResolvedRef | null): string | null => {
-    if (!ref || ref.status !== 'ambiguous' || ref.options.length === 0) return null;
-    if (!ref.reference) return null;
-    const names = ref.options.map((o) => o.name).join(', ');
-    return `Heard “${ref.reference}” — did you mean ${names}?`;
-  };
-
-  const Suggestion = ({ refValue }: { refValue: ResolvedRef | null }) => {
-    const hint = suggestionFor(refValue);
-    if (!hint) return null;
-    return <Text style={[type.caption, { color: colors.textSubtle }]}>{hint}</Text>;
-  };
-
   const patch = (next: Partial<ResolvedOperation>) => setOp((prev) => (prev ? { ...prev, ...next } : prev));
 
   const acknowledgeConflict = (index: number) =>
@@ -258,7 +275,14 @@ export default function ReviewOperationScreen() {
           {op.transcript ? (
             <Text style={[type.body, { color: colors.textSubtle, fontStyle: 'italic' }]}>“{op.transcript}”</Text>
           ) : null}
+          {diagnostics ? (
+            <Pressable accessibilityRole="button" onPress={() => setWhyOpen(true)} hitSlop={space.sm} style={styles.whyLink}>
+              <Feather name="info" size={13} color={colors.primary} />
+              <Text style={[type.caption, { color: colors.primary }]}>Why was it read like this?</Text>
+            </Pressable>
+          ) : null}
         </View>
+        <VoiceDiagnosticsSheet diagnostics={diagnostics} visible={whyOpen} onClose={() => setWhyOpen(false)} />
 
         {/* Editable core fields (audit F5): a near-miss is fixed here, never by
             rejecting and re-entering the whole transaction by hand. */}
@@ -271,6 +295,20 @@ export default function ReviewOperationScreen() {
                 value={nameText}
                 onChangeText={setNameText}
                 placeholder="What was it for?"
+                placeholderTextColor={colors.textSubtle}
+                style={[
+                  type.body,
+                  styles.textField,
+                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+                ]}
+              />
+            </View>
+            <View style={styles.group}>
+              <Text style={[type.sectionLabel, { color: colors.textMuted }]}>Note</Text>
+              <TextInput
+                value={noteText}
+                onChangeText={setNoteText}
+                placeholder="Optional"
                 placeholderTextColor={colors.textSubtle}
                 style={[
                   type.body,
@@ -326,7 +364,7 @@ export default function ReviewOperationScreen() {
                 />
               ))}
             </Group>
-            <Suggestion refValue={op.account} />
+            <Suggestion refValue={op.account} colors={colors} />
 
             {isExpInc ? (
               <>
@@ -341,7 +379,27 @@ export default function ReviewOperationScreen() {
                     />
                   ))}
                 </Group>
-                <Suggestion refValue={op.category} />
+                <Suggestion refValue={op.category} colors={colors} />
+              </>
+            ) : null}
+
+            {op.kind === 'expense' && op.paidBy ? (
+              // V1.3 (TC-039): someone else paid — approving records a borrow
+              // from them plus this expense. "Nobody" removes it (you paid).
+              <>
+                <Group colors={colors} title="Paid by">
+                  {people.map((p) => (
+                    <Chip
+                      colors={colors}
+                      key={p.id}
+                      label={p.name}
+                      active={op.paidBy?.id === p.id}
+                      onPress={() => patch({ paidBy: resolvedRef(p.id, p.name) })}
+                    />
+                  ))}
+                  <Chip colors={colors} label="I paid" active={false} onPress={() => patch({ paidBy: null })} />
+                </Group>
+                <Suggestion refValue={op.paidBy} colors={colors} />
               </>
             ) : null}
 
@@ -360,7 +418,7 @@ export default function ReviewOperationScreen() {
                       />
                     ))}
                 </Group>
-                <Suggestion refValue={op.toAccount} />
+                <Suggestion refValue={op.toAccount} colors={colors} />
               </>
             ) : null}
 
@@ -380,7 +438,7 @@ export default function ReviewOperationScreen() {
                     <Chip colors={colors} label={`+ Add “${op.person.reference}”`} active={false} onPress={addPersonFromReference} />
                   ) : null}
                 </Group>
-                <Suggestion refValue={op.person} />
+                <Suggestion refValue={op.person} colors={colors} />
                 <Group colors={colors} title="Direction">
                   {DIRECTIONS.map((d) => (
                     <Chip
@@ -419,6 +477,7 @@ export default function ReviewOperationScreen() {
 }
 
 const styles = StyleSheet.create({
+  whyLink: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
   scroll: { padding: layout.screenPaddingH, gap: space.xl, paddingBottom: space.xxl },
   summary: { borderRadius: layout.cardRadius, borderWidth: StyleSheet.hairlineWidth, padding: space.lg, gap: space.sm },
   textField: {

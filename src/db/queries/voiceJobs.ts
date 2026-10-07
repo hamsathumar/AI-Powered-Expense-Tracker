@@ -12,6 +12,7 @@
  */
 import * as Crypto from 'expo-crypto';
 
+import { parseDiagnostics, type VoiceDiagnostics } from '@/ai/diagnostics';
 import { getDb } from '@/db/client';
 
 export type VoiceJobStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -31,6 +32,8 @@ export interface VoiceJob {
   resultTranscript: string;
   /** Financial intents heard WITHOUT a grounded amount — preserved, not logged. */
   unqualifiedCount: number;
+  /** What happened inside the parse (Phase C); null for old or pruned jobs. */
+  diagnostics: VoiceDiagnostics | null;
   notified: boolean;
   createdAt: string;
   updatedAt: string;
@@ -47,6 +50,7 @@ interface Row {
   pending_ids: string | null;
   result_transcript: string | null;
   unqualified_count: number;
+  diagnostics: string | null;
   notified: number;
   created_at: string;
   updated_at: string;
@@ -76,6 +80,7 @@ function fromRow(row: Row): VoiceJob {
     pendingIds: parseIds(row.pending_ids),
     resultTranscript: row.result_transcript ?? '',
     unqualifiedCount: row.unqualified_count,
+    diagnostics: parseDiagnostics(row.diagnostics),
     notified: row.notified === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -83,7 +88,7 @@ function fromRow(row: Row): VoiceJob {
 }
 
 const SELECT = `SELECT id, audio_uri, audio_mime, transcript, status, attempts, error,
-                       pending_ids, result_transcript, unqualified_count, notified,
+                       pending_ids, result_transcript, unqualified_count, diagnostics, notified,
                        created_at, updated_at
                   FROM voice_jobs`;
 
@@ -149,20 +154,34 @@ export interface VoiceJobOutcome {
   pendingIds: string[];
   transcript: string;
   unqualifiedCount: number;
+  diagnostics?: VoiceDiagnostics;
 }
+
+/** How many captures keep their diagnostics record; older ones are cleared. */
+export const DIAGNOSTICS_KEPT = 50;
 
 export async function markVoiceJobDone(id: string, outcome: VoiceJobOutcome): Promise<void> {
   const db = await getDb();
   await db.runAsync(
     `UPDATE voice_jobs
         SET status = 'done', error = NULL, pending_ids = ?, result_transcript = ?,
-            unqualified_count = ?, updated_at = ?
+            unqualified_count = ?, diagnostics = ?, updated_at = ?
       WHERE id = ?`,
     JSON.stringify(outcome.pendingIds),
     outcome.transcript || null,
     outcome.unqualifiedCount,
+    outcome.diagnostics ? JSON.stringify(outcome.diagnostics) : null,
     new Date().toISOString(),
     id,
+  );
+  // Keep only the latest records — diagnostics are for "why did that just
+  // read wrong?", not an archive of everything ever said.
+  await db.runAsync(
+    `UPDATE voice_jobs SET diagnostics = NULL
+      WHERE diagnostics IS NOT NULL
+        AND id NOT IN (SELECT id FROM voice_jobs WHERE diagnostics IS NOT NULL
+                        ORDER BY created_at DESC LIMIT ?)`,
+    DIAGNOSTICS_KEPT,
   );
 }
 

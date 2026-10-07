@@ -9,9 +9,14 @@
  * can bypass the gate.
  */
 import { evaluateApproval, type Blocker, type GateResult } from '@/ai/interpretation/gate';
-import { toNewTransaction } from '@/ai/interpretation/toTransaction';
+import { toNewTransactions } from '@/ai/interpretation/toTransaction';
 import type { ResolvedOperation, ResolvedRef } from '@/ai/interpretation/types';
-import { resolveRef, type EntityLite, type ResolveContext } from '@/ai/interpretation/resolve';
+import {
+  resolveAccountRef,
+  resolveRef,
+  type EntityLite,
+  type ResolveContext,
+} from '@/ai/interpretation/resolve';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
 import { listPeople } from '@/db/queries/people';
@@ -19,8 +24,9 @@ import {
   deletePendingOperation,
   getPendingOperation,
   listPendingOperations,
+  updatePendingOperation,
 } from '@/db/queries/pendingOperations';
-import { insertTransaction } from '@/db/queries/transactions';
+import { insertTransactionsAtomically } from '@/db/queries/transactions';
 import { recordPendingOutcome } from '@/state/pendingOutcomes';
 
 export interface CommitResult {
@@ -39,15 +45,21 @@ async function loadContext(): Promise<ResolveContext> {
   const lite = <T extends { id: string; name: string }>(xs: T[]): EntityLite[] =>
     xs.map((x) => ({ id: x.id, name: x.name }));
   return {
-    accounts: lite(accounts),
+    accounts: accounts.map((a) => ({ id: a.id, name: a.name, kind: a.type })),
     expenseCategories: lite(expenseCategories),
     incomeCategories: lite(incomeCategories),
     people: lite(people),
   };
 }
 
-/** Re-verify a resolved ref against live data: an id that vanished is downgraded. */
-function refreshRef(ref: ResolvedRef | null, pool: EntityLite[]): ResolvedRef | null {
+/** Re-verify a resolved ref against live data: an id that vanished is downgraded.
+ *  Accounts re-resolve through `resolveAccountRef`, exactly as at interpretation
+ *  time, so the queue and the commit path can never disagree about a name. */
+function refreshRef(
+  ref: ResolvedRef | null,
+  pool: EntityLite[],
+  resolve: typeof resolveRef = resolveRef,
+): ResolvedRef | null {
   if (!ref) return null;
   if (ref.id) {
     if (pool.some((e) => e.id === ref.id)) return { ...ref, status: 'resolved', options: [] };
@@ -57,7 +69,7 @@ function refreshRef(ref: ResolvedRef | null, pool: EntityLite[]): ResolvedRef | 
   // near-match suggestions), so the queue and the commit path can never
   // disagree about what a name means.
   return (
-    resolveRef({ reference: ref.reference, provenance: 'AI_INTERPRETED', state: 'KNOWN', candidates: [] }, pool) ?? null
+    resolve({ reference: ref.reference, provenance: 'AI_INTERPRETED', state: 'KNOWN', candidates: [] }, pool) ?? null
   );
 }
 
@@ -65,10 +77,11 @@ function refresh(op: ResolvedOperation, ctx: ResolveContext): ResolvedOperation 
   const catPool = op.operation === 'income' ? ctx.incomeCategories : ctx.expenseCategories;
   return {
     ...op,
-    account: refreshRef(op.account, ctx.accounts),
-    toAccount: refreshRef(op.toAccount, ctx.accounts),
+    account: refreshRef(op.account, ctx.accounts, resolveAccountRef),
+    toAccount: refreshRef(op.toAccount, ctx.accounts, resolveAccountRef),
     category: op.category ? refreshRef(op.category, catPool) : null,
     person: refreshRef(op.person, ctx.people),
+    paidBy: refreshRef(op.paidBy ?? null, ctx.people),
   };
 }
 
@@ -85,11 +98,12 @@ async function commitRecord(
   const gate = evaluateApproval(op);
   if (!gate.approvable) return { committed: false, blockers: gate.blockers };
 
-  // The capture time, not now — see toTransaction.ts.
-  const inserted = await insertTransaction(toNewTransaction(op, record.createdAt));
+  // The capture time, not now — see toTransaction.ts. One row, or the
+  // borrow + expense pair for "X paid for me" (V1.3) — all or nothing.
+  const inserted = await insertTransactionsAtomically(toNewTransactions(op, record.createdAt));
   await deletePendingOperation(record.id);
   recordPendingOutcome(record.id, 'approved');
-  return { committed: true, transactionId: inserted.id, blockers: [] };
+  return { committed: true, transactionId: inserted[inserted.length - 1]!.id, blockers: [] };
 }
 
 /** Reject: the operation is discarded and never reaches the ledger. Every
@@ -115,6 +129,34 @@ export async function commitPendingOperation(id: string): Promise<CommitResult> 
   const record = await getPendingOperation(id);
   if (!record) return { committed: false, blockers: [{ code: 'unsupported_operation', message: 'Pending item not found.' }] };
   return commitRecord(record, await loadContext());
+}
+
+/**
+ * "Confirm & approve" (V1.3): the user acknowledged every confirmation note on
+ * the item they are looking at. Those conflicts are cleared — that IS the
+ * confirmation — and the item goes through the normal gate. Anything else
+ * still blocking (a missing field, or a suspected injection, which is never
+ * cleared here) keeps it out of the ledger exactly as before.
+ */
+export async function confirmAndCommitPendingOperation(id: string): Promise<CommitResult> {
+  const record = await getPendingOperation(id);
+  if (!record) return { committed: false, blockers: [{ code: 'unsupported_operation', message: 'Pending item not found.' }] };
+  const confirmed = {
+    ...record,
+    // Only the one-tap kinds are acknowledged here (see issues.ts
+    // `confirmableInline`); anything else keeps blocking.
+    op: {
+      ...record.op,
+      conflicts: record.op.conflicts.filter(
+        (c) => !['amount_by_reference', 'amount_uncertain', 'amount_correction', 'date_unresolved'].includes(c.kind),
+      ),
+    },
+  };
+  const result = await commitRecord(confirmed, await loadContext());
+  // Keep the acknowledgement even if something else still blocks, so the
+  // user is not asked the same question twice.
+  if (!result.committed) await updatePendingOperation(id, confirmed.op);
+  return result;
 }
 
 export interface EvaluatedPending {

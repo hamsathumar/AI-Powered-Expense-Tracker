@@ -69,7 +69,9 @@ export async function getMotionMode(): Promise<MotionMode> {
  * (A newer "Interactions API" exists but the stable generateContent path is
  * what this app targets.)
  */
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+// gemini-2.5-flash started answering 404 (retired) by 2026-10-07; the owner
+// confirmed this one works with the live eval. Still user-editable in Settings.
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 export async function getGeminiModel(): Promise<string> {
   return (await getSetting(SETTINGS_KEYS.geminiModel)) ?? DEFAULT_GEMINI_MODEL;

@@ -23,6 +23,8 @@ export type BlockerCode =
   | 'person_unresolved'
   | 'person_ambiguous'
   | 'direction_unresolved'
+  | 'payer_unresolved'
+  | 'payer_ambiguous'
   | 'unresolved_conflict'
   | 'needs_specialized_editor'
   | 'unsupported_operation';
@@ -59,7 +61,13 @@ export function evaluateApproval(op: ResolvedOperation): GateResult {
   } else if (!Number.isInteger(op.amountMinor) || op.amountMinor <= 0) {
     blockers.push(b('amount_not_grounded', 'The amount is not a grounded value.'));
   }
-  if (op.amountProvenance !== 'USER_EXPLICIT' && op.amountProvenance !== 'AI_INTERPRETED') {
+  // Provenance only matters for an amount that EXISTS. A missing amount is
+  // already reported above; saying it twice (TC-031) only reads as two faults.
+  if (
+    op.amountMinor !== null &&
+    op.amountProvenance !== 'USER_EXPLICIT' &&
+    op.amountProvenance !== 'AI_INTERPRETED'
+  ) {
     blockers.push(b('amount_provenance_inferred', 'The amount was not grounded in what the user said.'));
   }
 
@@ -74,6 +82,16 @@ export function evaluateApproval(op: ResolvedOperation): GateResult {
       blockers.push(b('account_unresolved', 'No account selected.'));
     } else if (op.account.status === 'ambiguous') {
       blockers.push(b('account_ambiguous', 'The account reference matches more than one account.'));
+    }
+
+    // V1.3 (TC-039): "Sham paid for my dinner" — the borrow half needs a real
+    // person, exactly like a lending row does.
+    if (op.kind === 'expense' && op.paidBy) {
+      if (op.paidBy.status === 'unresolved') {
+        blockers.push(b('payer_unresolved', 'Pick who paid for it.'));
+      } else if (op.paidBy.status === 'ambiguous') {
+        blockers.push(b('payer_ambiguous', 'Pick which person paid for it.'));
+      }
     }
 
     if (op.kind === 'expense' || op.kind === 'income') {

@@ -149,6 +149,17 @@ export async function getPersonNetBalanceMinor(personId: string): Promise<number
   return row?.net ?? 0;
 }
 
+/** Pending lending rows per person, in one query (voice balance fill, TC-031). */
+export async function countPendingLendingByPerson(): Promise<Map<string, number>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ person_id: string; n: number }>(
+    `SELECT person_id, COUNT(*) AS n FROM transactions
+     WHERE type = 'lending' AND status = 'pending' AND person_id IS NOT NULL
+     GROUP BY person_id`,
+  );
+  return new Map(rows.map((r) => [r.person_id, r.n]));
+}
+
 /** Whether the person has pending lending rows (Settle Up hint — spec §3.5). */
 export async function hasPendingLending(personId: string): Promise<number> {
   const db = await getDb();

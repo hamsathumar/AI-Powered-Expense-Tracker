@@ -4,8 +4,14 @@
  * The AI only produces a date EXPRESSION; this app-owned resolver turns a
  * supported expression into an ISO timestamp. Unsupported/absent expressions
  * fall back to the reference "now" and report `resolved:false` so the caller
- * can surface it. Time-of-day and future-date signalling remain OPEN product
- * questions and are intentionally not decided here.
+ * can surface it. Future-date signalling remains an OPEN product question.
+ *
+ * V1.3 (TC-033, owner decision D1 of 2026-10-07): a stated clock time is now
+ * honoured — "yesterday around 10 in the evening" is yesterday at 22:00. This
+ * reverses the V1.2 "time-of-day words resolve to the DAY" convention for
+ * expressions that carry an actual hour. A bare hour with no am/pm and no part
+ * of day ("yesterday at 10") resolves the day but sets `timeNeedsConfirm`, so
+ * the caller asks rather than guessing morning or evening.
  */
 import { addDays, addMonths, addWeeks, addYears } from 'date-fns';
 
@@ -13,6 +19,9 @@ export interface DateResolution {
   iso: string;
   /** true when the expression was understood (or absent → reference now). */
   resolved: boolean;
+  /** true when an hour was stated without am/pm or a part of day, so it could
+   *  be either — the day is right, the time must be confirmed. */
+  timeNeedsConfirm?: boolean;
 }
 
 const WEEKDAYS: Record<string, number> = {
@@ -57,6 +66,117 @@ function atReferenceTime(reference: Date, y: number, monthIndex: number, day: nu
 }
 
 export function resolveDateExpression(expression: string | null, reference: Date): DateResolution {
+  const dayOnly = resolveDayExpression(expression, reference);
+  if (dayOnly.resolved || !expression) return dayOnly;
+  return resolveWithTime(expression, reference) ?? dayOnly;
+}
+
+// ── Clock time (V1.3, TC-033) ────────────────────────────────────────────
+type PartOfDay = 'morning' | 'afternoon' | 'evening' | 'night';
+
+/**
+ * A clock time, recognised ONLY with a cue that makes it a time: a leading
+ * "at/around/about/by", ":mm", am/pm/o'clock, or a part of day. Without one, a
+ * number is left alone — "15 August", "the 15th" and "3 days ago" never read
+ * as hours.
+ */
+const TIME =
+  /(?:\b(at|around|about|by|approx(?:imately)?|roughly)\s+)?\b(\d{1,2})(?:[:.](\d{2}))?(?:\s*(a\.?m\.?|p\.?m\.?|o'?\s?clock))?(?:\s+(?:in\s+the\s+|at\s+)?(morning|afternoon|evening|night))?(?![\w:])/i;
+
+/** A part of day with no hour ("yesterday evening", "yesterday at night"). */
+const PART_ONLY = /\b(?:in\s+the\s+|at\s+|this\s+)?(morning|afternoon|evening|night)\b/i;
+
+function partOfDayIn(text: string): PartOfDay | null {
+  if (/\btonight\b|\bnight\b/.test(text)) return 'night';
+  const m = text.match(/\b(morning|afternoon|evening)\b/);
+  return m ? (m[1] as PartOfDay) : null;
+}
+
+/** 12-hour clock + context → 24-hour, or null when it could be either. */
+function to24h(hour: number, meridiem: string | null, part: PartOfDay | null): number | null {
+  if (meridiem) {
+    const pm = meridiem.startsWith('p');
+    if (pm) return hour === 12 ? 12 : hour + 12;
+    return hour === 12 ? 0 : hour;
+  }
+  if (hour >= 13 || hour === 0) return hour; // already 24-hour
+  switch (part) {
+    case 'morning':
+      return hour === 12 ? 0 : hour;
+    case 'afternoon':
+    case 'evening':
+      return hour === 12 ? 12 : hour + 12;
+    case 'night':
+      // "10 at night" is 22:00; "2 at night" is 02:00; "12 at night" midnight.
+      if (hour === 12) return 0;
+      return hour >= 6 ? hour + 12 : hour;
+    default:
+      return null; // "at 10" — morning or evening? Ask.
+  }
+}
+
+function resolveWithTime(expression: string, reference: Date): DateResolution | null {
+  const e = expression.trim().toLowerCase().replace(/[.,]+$/, '');
+  // The first number that is plainly a TIME — "2 days ago at 18:45" must skip
+  // the "2" (no cue) and take "18:45".
+  const m =
+    [...e.matchAll(new RegExp(TIME.source, 'gi'))].find((x) => !!(x[1] || x[3] || x[4] || x[5])) ?? null;
+  const hasCue = m !== null;
+
+  let dayText: string;
+  let hour: number | null = null;
+  let minute = 0;
+  let timeNeedsConfirm = false;
+
+  if (m && hasCue) {
+    dayText = (e.slice(0, m.index) + ' ' + e.slice(m.index! + m[0].length)).trim();
+    const rawHour = Number(m[2]);
+    minute = m[3] ? Number(m[3]) : 0;
+    if (rawHour > 23 || minute > 59) return null;
+    const meridiem = m[4] && !/clock/.test(m[4]) ? m[4].replace(/\./g, '') : null;
+    const part = (m[5] as PartOfDay | undefined) ?? partOfDayIn(dayText);
+    const h24 = to24h(rawHour, meridiem, part);
+    if (h24 === null) {
+      hour = rawHour;
+      timeNeedsConfirm = true;
+    } else {
+      hour = h24;
+    }
+  } else {
+    // No clock time; perhaps "yesterday evening". The day is honoured, the
+    // hour is not invented (the reference time of day is kept).
+    const p = e.match(PART_ONLY);
+    if (!p) return null;
+    dayText = (e.slice(0, p.index) + ' ' + e.slice(p.index! + p[0].length)).trim();
+  }
+
+  // Filler left behind once the time is lifted out.
+  dayText = dayText
+    .replace(/\b(around|about|approx(?:imately)?|roughly|at|by|in\s+the)\s*$/i, '')
+    .replace(/^\s*(around|about|at|on)\b/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  let base: Date;
+  if (dayText.length === 0) {
+    base = new Date(reference);
+  } else {
+    const day = resolveDayExpression(dayText, reference);
+    if (!day.resolved) return null;
+    base = new Date(day.iso);
+  }
+
+  if (hour !== null) {
+    base.setHours(hour, minute, 0, 0);
+    // "at 10 pm" said in the morning with no day: the most recent 10 pm
+    // (past-leaning, like every other bare date in this grammar).
+    if (dayText.length === 0 && base > reference) base = shiftDays(base, -1);
+  }
+  return { iso: base.toISOString(), resolved: true, ...(timeNeedsConfirm ? { timeNeedsConfirm } : {}) };
+}
+
+/** The day-level grammar (V1 + V1.2). Times of day are layered on top above. */
+function resolveDayExpression(expression: string | null, reference: Date): DateResolution {
   const nowIso = reference.toISOString();
   if (!expression) return { iso: nowIso, resolved: true }; // unexpressed → reference now (honest default)
 
@@ -126,6 +246,19 @@ export function resolveDateExpression(expression: string | null, reference: Date
       if (qualifier === 'this' && target === current) delta = 0;
     }
     return { iso: shiftDays(reference, delta).toISOString(), resolved: true };
+  }
+
+  // ISO with a time "2026-08-15T22:30" — what the review screen writes back
+  // since V1.3, so an edited time is kept exactly (never re-read as "10 — am
+  // or pm?").
+  const isoTime = e.match(/^(\d{4})-(\d{2})-(\d{2})t(\d{2}):(\d{2})$/);
+  if (isoTime) {
+    const [y, mo, d, h, mi] = isoTime.slice(1).map(Number) as [number, number, number, number, number];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59) {
+      const at = atReferenceTime(reference, y, mo - 1, d);
+      at.setHours(h, mi, 0, 0);
+      return { iso: at.toISOString(), resolved: true };
+    }
   }
 
   // ISO "2026-08-15" — also how the review screen's date picker writes back.

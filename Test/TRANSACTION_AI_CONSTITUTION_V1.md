@@ -11,6 +11,14 @@
 
 **Implementation:** None. This document defines *behaviour*, not prompts, schemas, or code.
 
+> **AMENDED — V1.3 (2026-10-07).** The third real-world round
+> (`Test/AI_TEST_CASE_LOG_v3.md`, TC-028…TC-040) again confirmed every safety
+> boundary. Phase A made action-vs-label conflicts app-owned (one per
+> operation, none for a label that names no type), honoured stated clock times
+> (D1), and let the application fill a whole-balance repayment from its own
+> approved ledger with a mandatory confirmation (the AI still never sees a
+> balance). See `Test/TRANSACTION_AI_V1_3_AMENDMENTS.md`.
+
 > **AMENDED — V1.2 (2026-08-25).** The pipeline audit added: grounding by
 > reference for anaphoric amounts (with a mandatory confirm conflict),
 > language-independent amount grounding, blocking conflicts for un-resolvable

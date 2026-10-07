@@ -63,7 +63,11 @@ export type ConflictKind =
   /** App-attached: the utterance carried a financial intent but no operation
    *  the app recognised, so a type was assumed and must be confirmed or
    *  corrected before approval. (Audit F3.) */
-  | 'type_unconfirmed';
+  | 'type_unconfirmed'
+  /** App-attached (V1.3, TC-034): this operation's amount appears only inside
+   *  a note the user dictated ("add a note: 200 left") — almost certainly not a
+   *  separate transaction. Reject unless it really is one. */
+  | 'note_not_transaction';
 
 export type DateKind = 'absolute' | 'relative' | 'named_weekday' | 'none';
 
@@ -117,6 +121,12 @@ export interface OrdinaryCandidate {
   requestedLabel: string | null; // a label the user asked for, if it differs from the action
   date: DateExpr;
   name: string;
+  /** A note the user dictated for this transaction ("add a note: 200 left").
+   *  Free text, saved as the transaction's Note — never a transaction (V1.3). */
+  note: string | null;
+  /** Expense only: someone ELSE paid for the user's expense ("Sham paid for
+   *  my dinner"). The app records it as a borrow + expense pair (V1.3). */
+  paidBy: EntityRef | null;
   conflicts: Conflict[];
   evidence: EvidenceSpan[];
 }
@@ -172,10 +182,15 @@ export interface UnqualifiedIntent {
   account: EntityRef | null;
   category: EntityRef | null;
   person: EntityRef | null;
+  /** Lending only: which way the money went, when it was heard (V1.3 — needed
+   *  to fill a balance-referencing repayment amount, TC-031). */
+  direction: LendingDirection | null;
   date: DateExpr;
   /** App-owned name, derived the same way a candidate's is, so the intent is
    *  readable once it reaches the queue (audit F3). */
   name: string;
+  /** A dictated note, as on a candidate (V1.3). */
+  note: string | null;
   evidence: EvidenceSpan[];
   rejectionReason: RejectionReason;
   /** Structural guarantee — an unqualified intent is NEVER a candidate: it
@@ -232,8 +247,17 @@ export interface ResolvedOperation {
   requestedLabel: string | null;
   dateExpression: string | null;
   name: string;
+  /** Saved as the transaction's Note. Optional: rows queued before V1.3 have none. */
+  note?: string | null;
+  /** Expense only — who paid instead of the user (V1.3, TC-039). When set, the
+   *  commit records a borrow from that person + the expense, atomically.
+   *  Optional: rows queued before V1.3 have none. */
+  paidBy?: ResolvedRef | null;
   conflicts: Conflict[];
   transcript: string;
+  /** The voice capture that produced this operation, so its diagnostics can be
+   *  opened from the review screen (V1.3 Phase C). Optional: older rows lack it. */
+  voiceJobId?: string;
   /** Specialized payload preserved verbatim for the dedicated editors. */
   specialized: SpecializedOperation | null;
 }

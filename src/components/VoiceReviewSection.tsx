@@ -18,10 +18,12 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   commitPendingOperation,
+  confirmAndCommitPendingOperation,
   evaluateAllPending,
   rejectPendingOperation,
   type EvaluatedPending,
 } from '@/ai/commitOperation';
+import { confirmableInline, describeIssues } from '@/ai/interpretation/issues';
 import { Amount } from '@/components/Amount';
 import { subscribePendingOutcomes } from '@/state/pendingOutcomes';
 import { useTheme } from '@/theme/ThemeContext';
@@ -123,11 +125,14 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
       openEditor(item);
       return;
     }
-    if (!item.gate.approvable) {
+    const inline = confirmableInline(item.gate);
+    if (!item.gate.approvable && !inline) {
       router.push({ pathname: '/review/[id]', params: { id: item.id } });
       return;
     }
-    commitPendingOperation(item.id).then((res) => {
+    // Only confirmations block it, and they are listed on the card: the tap IS
+    // the confirmation (V1.3, same as the Logged card).
+    (inline ? confirmAndCommitPendingOperation : commitPendingOperation)(item.id).then((res) => {
       if (!res.committed) {
         Alert.alert('Not ready', res.blockers.map((b) => b.message).join('\n'));
       }
@@ -145,8 +150,15 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
     <View style={styles.list}>
       {items.map((item) => {
           const specialized = isSpecialized(item);
-          const blocked = !item.gate.approvable;
-          const primaryLabel = specialized ? 'Review & Edit' : blocked ? 'Finish details' : 'Approve';
+          const inline = !specialized && confirmableInline(item.gate);
+          const blocked = !item.gate.approvable && !inline;
+          const primaryLabel = specialized
+            ? 'Review & Edit'
+            : inline
+              ? 'Confirm & approve'
+              : blocked
+                ? 'Finish details'
+                : 'Approve';
           const primaryIcon = specialized || blocked ? 'edit-2' : 'check';
           const primaryFilled = !specialized && !blocked;
           return (
@@ -178,12 +190,13 @@ export function VoiceReviewSection({ onCountChange, refreshToken = 0 }: Props) {
                       “{item.op.transcript}”
                     </Text>
                   ) : null}
-                  {blocked && !specialized ? (
+                  {!item.gate.approvable && !specialized ? (
+                    // The same wording the Logged card and review screen use (TC-040).
                     <View style={styles.flagRow}>
-                      {item.gate.blockers.slice(0, 3).map((b, i) => (
-                        <View key={i} style={[styles.flagPill, { borderColor: colors.warning }]}>
+                      {describeIssues(item.gate).map((issue) => (
+                        <View key={issue.message} style={[styles.flagPill, { borderColor: colors.warning }]}>
                           <Text style={[type.caption, { color: isDark ? colors.warning : colors.lending }]}>
-                            {b.message}
+                            {issue.message}
                           </Text>
                         </View>
                       ))}

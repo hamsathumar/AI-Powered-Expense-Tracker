@@ -109,11 +109,12 @@ async function runJob(job: VoiceJob): Promise<void> {
   emit();
 
   try {
-    const parsed = await interpretVoice(job.audioUri, job.audioMime);
+    const parsed = await interpretVoice(job.audioUri, job.audioMime, job.id);
     await markVoiceJobDone(job.id, {
       pendingIds: parsed.pendingIds,
       transcript: parsed.transcript,
-      unqualifiedCount: parsed.unqualifiedIntents.length,
+      unqualifiedCount: parsed.needsAmountCount,
+      diagnostics: parsed.diagnostics,
     });
 
     // Only tell the user separately when they are not already watching the

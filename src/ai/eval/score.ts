@@ -20,6 +20,7 @@
  */
 import { evaluateApproval } from '@/ai/interpretation/gate';
 import {
+  inheritFundingAccount,
   resolveCandidate,
   resolveSpecialized,
   resolveUnqualified,
@@ -58,6 +59,13 @@ export interface EvalCase {
   utterance: string;
   /** A recorded model response, for the hermetic replay. */
   modelOutput: unknown;
+  /**
+   * A BACKSTOP case: its recorded output is a deliberately bad reading (one
+   * actually seen on a device), and it proves the app catches it. Sending the
+   * utterance to a model that now reads it correctly cannot exercise that
+   * backstop, so the live run skips it.
+   */
+  offlineOnly?: boolean;
   expect: {
     operations: ExpectedOperation[];
     /** Asserts the count exactly, unless `atLeast` is set. */
@@ -86,11 +94,19 @@ function describe(op: ResolvedOperation): string {
 /** Run one model output through the pipeline exactly as the app would. */
 export function pipelineOperations(modelOutput: unknown, ctx: ResolveContext, now: Date): ResolvedOperation[] {
   const validated = validateInterpretation(modelOutput, { now });
-  return [
-    ...validated.candidates.map((c) => resolveCandidate(c, ctx)),
-    ...validated.specializedOperations.map((s) => resolveSpecialized(s, ctx)),
-    ...validated.unqualifiedIntents.map((u) => resolveUnqualified(u, ctx)),
-  ];
+  // The same "what the user said" scope interpretVoice passes (V1.3), so a
+  // replay reaches exactly the end state the app would.
+  const count =
+    validated.candidates.length + validated.specializedOperations.length + validated.unqualifiedIntents.length;
+  const scope = { transcript: validated.transcript, soleOperation: count === 1 };
+  return inheritFundingAccount(
+    [
+      ...validated.candidates.map((c) => resolveCandidate(c, ctx, scope)),
+      ...validated.specializedOperations.map((s) => resolveSpecialized(s, ctx)),
+      ...validated.unqualifiedIntents.map((u) => resolveUnqualified(u, ctx, scope)),
+    ],
+    validated.transcript,
+  );
 }
 
 function matches(op: ResolvedOperation, want: ExpectedOperation): boolean {

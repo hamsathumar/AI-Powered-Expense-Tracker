@@ -305,6 +305,8 @@ export const fontFamily = {
   headingBold: 'Sora_700Bold',
   body: 'Inter_400Regular',
   medium: 'Inter_500Medium',
+  /** System monospace — only for raw machine output (voice diagnostics). */
+  mono: Platform.select({ ios: 'Menlo', default: 'monospace' }),
 } as const;
 
 /** Tabular figures so digits align vertically in lists — required on every
