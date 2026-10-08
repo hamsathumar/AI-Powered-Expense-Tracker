@@ -1,12 +1,12 @@
 # Kaasu — Transaction AI Architecture V1
 
 > **AMENDED — V1.3 (2026-10-07).** The third real-world round
-> (`Test/AI_TEST_CASE_LOG_v3.md`, TC-028…TC-040) again confirmed every safety
+> (`Test/AI_TEST_CASE_LOG.md`, TC-028…TC-040) again confirmed every safety
 > boundary. Phase A made action-vs-label conflicts app-owned (one per
 > operation, none for a label that names no type), honoured stated clock times
 > (D1), and let the application fill a whole-balance repayment from its own
 > approved ledger with a mandatory confirmation (the AI still never sees a
-> balance). See `Test/TRANSACTION_AI_V1_3_AMENDMENTS.md`.
+> balance). See `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.3).
 
 > **AMENDED — V1.2 (2026-08-25).** The validation layer (§9) gained
 > grounding-by-reference for anaphoric amounts, multilingual magnitude
@@ -22,11 +22,11 @@
 > double-counted, and re-interpreted if so. It is contained deterministically
 > (a claim whose amount is not in the transcript is discarded) and its output
 > re-enters the SAME validation and the SAME gate — the layer ordering is
-> unchanged. See `Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`.
+> unchanged. See `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.2).
 
 **Phase:** Architecture / Design (no implementation).
 **Status:** First formal architecture for the Transaction AI. Design-level only.
-**Inputs:** `Test/KAASU_TRANSACTION_AI_REQUIREMENTS.md` (finalized requirements), `Test/CURRENT_AI_ARCHITECTURE_AUDIT.md`, `Test/AI_TEST_ANALYSIS.md`, `Test/AI_TEST_CASE_LOG.md`, and inspection of the current `src/ai/*`, `src/db/queries/*`, and queue code.
+**Inputs:** `Test/KAASU_TRANSACTION_AI_REQUIREMENTS.md` (finalized requirements), `Test/archive/CURRENT_AI_ARCHITECTURE_AUDIT.md`, `Test/archive/AI_TEST_ANALYSIS.md`, `Test/AI_TEST_CASE_LOG.md`, and inspection of the current `src/ai/*`, `src/db/queries/*`, and queue code.
 
 This document defines **what the architecture is** and **where authority lives**. It deliberately does **not** define JSON schemas, TypeScript interfaces, SQLite changes, prompt text, or UI. Those are §28 boundaries.
 
@@ -38,11 +38,11 @@ Two labels are used throughout and never blurred:
 ---
 
 > **AMENDED — V1.1 (2026-08-21).** The second real-world test round
-> (`Test/AI_TEST_CASE_LOG_v2.md`, TC-021…TC-027) confirmed the seven-layer
+> (`Test/AI_TEST_CASE_LOG.md`, TC-021…TC-027) confirmed the seven-layer
 > architecture and every safety boundary in it. Five sections gained amendment
 > blocks — §4, §15, §16, §21, §22 — covering duplicate suppression, recurrence
 > end conditions, entity containment, and durable interpretation jobs. Full
-> reasoning: `Test/TRANSACTION_AI_V1_1_AMENDMENTS.md`.
+> reasoning: `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.1).
 
 ## 0. The one-line thesis
 

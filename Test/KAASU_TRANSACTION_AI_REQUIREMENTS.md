@@ -1,7 +1,7 @@
 # Kaasu Transaction AI — Behavioural Requirements Specification
 
 **Phase:** Requirements Definition (behaviour only — not architecture, not implementation).
-**Inputs:** `Test/AI_TEST_ANALYSIS.md` (real-world test evidence) and `Test/CURRENT_AI_ARCHITECTURE_AUDIT.md` (confirmed codebase behaviour).
+**Inputs:** `Test/archive/AI_TEST_ANALYSIS.md` (real-world test evidence) and `Test/archive/CURRENT_AI_ARCHITECTURE_AUDIT.md` (confirmed codebase behaviour).
 **Status of this document:** defines *what* the Transaction AI must do. It deliberately does **not** define *how*.
 
 Throughout, every requirement is grounded in an explicit chain:

@@ -1,5 +1,10 @@
 # Kaasu Transaction AI — Test Evidence Analysis
 
+> **HISTORICAL DOCUMENT (archived 2026-10-07).** Analysis of test round 1
+> (TC-001 … TC-020) only, written before Transaction AI V1. Its requirements
+> R1–R12 fed `KAASU_TRANSACTION_AI_REQUIREMENTS.md` and the V1 blueprint, and
+> are still cited by the 2026-08-25 pipeline audit. Keep for evidence lineage.
+
 **Source evidence:** `AI_TEST_CASE_LOG.md` (frozen master log, 7-day real-world test)
 **Scope of this document:** analysis of the attached test log only. No codebase inspection, no external sources, no proposed fixes.
 **Question answered:** *What did our real-world testing reveal about the current behaviour, strengths, weaknesses, and requirements of Kaasu's Transaction AI?*

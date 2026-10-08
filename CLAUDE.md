@@ -67,11 +67,15 @@ generic skill recommendations:
   motion, anti-patterns. Overrides any generic design skill.
 
 For the voice/AI layer specifically, `Test/` holds the AI blueprint. Read
-`TRANSACTION_AI_V1_2_AMENDMENTS.md` and `TRANSACTION_AI_V1_1_AMENDMENTS.md`
-**first** — they record what changed after real-world testing and the
-2026-08-25 pipeline audit (`AI_PIPELINE_AUDIT_2026-08-25.md`), and point into
-the V1 constitution / architecture / technical-contract documents.
-`CURRENT_AI_ARCHITECTURE_AUDIT.md` is historical (pre-V1) — do not act on it.
+`TRANSACTION_AI_AMENDMENTS.md` **first** — newest part (V1.3) first, then
+V1.2 and V1.1. It records every change made after real-world testing
+(`AI_TEST_CASE_LOG.md`, all rounds) and the 2026-08-25 pipeline audit
+(`AI_PIPELINE_AUDIT_2026-08-25.md`), and points into the V1 constitution /
+architecture / technical-contract documents. Section numbers (§) restart in
+each part — cite "V1.1 §10" or the amendment letter (A…AH, unique).
+`Test/archive/` holds historical documents (`CURRENT_AI_ARCHITECTURE_AUDIT.md`,
+`AI_TEST_ANALYSIS.md`) — evidence lineage only, do not act on them. How to
+record a new test case: `Test/AI_TESTING_GUIDE.md`.
 
 ## Stack
 
@@ -166,13 +170,13 @@ still include lending done through a private account.
   (default `gemini-3.5-flash-lite` since 2026-10-07 — 2.5-flash now 404s), expo-audio capture screen, floating mic on Home.
 
 - **Transaction AI V1.1 ✅ (2026-08-21):** second-round test evidence
-  (`Test/AI_TEST_CASE_LOG_v2.md`, TC-021…TC-027) closed. Seven amendments —
+  (`Test/AI_TEST_CASE_LOG.md`, TC-021…TC-027) closed. Seven amendments —
   duplicate suppression for split/recurring, shape-based injection detection,
   entity-reference containment (incl. a guard on `createPerson` itself),
   app-owned Title Case naming, recurrence end conditions, and a durable
   voice-parse job queue (`voice_jobs`, migration 5) that survives
   backgrounding and app kill. Blueprint updated in
-  `Test/TRANSACTION_AI_V1_1_AMENDMENTS.md` + amendment blocks in the three V1
+  `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.1) + amendment blocks in the three V1
   docs. **Needs `npx expo prebuild` before the next run** — `expo-notifications`
   was added to `app.json`.
 
@@ -210,7 +214,7 @@ still include lending done through a private account.
 
 - **AI audit + V1.2 Phase 1 ✅ (2026-08-25):** full pipeline audit
   (`Test/AI_PIPELINE_AUDIT_2026-08-25.md`, findings F1–F11) followed by the
-  Phase 1 fixes (`Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`): anaphoric amounts
+  Phase 1 fixes (`Test/TRANSACTION_AI_AMENDMENTS.md` (V1.2)): anaphoric amounts
   ("that amount") grounded by reference with a confirm conflict; Tamil/mixed
   amount expressions grounded (prompt guarantees digits in `expression`);
   un-resolvable date expressions and AMBIGUOUS amounts now block via
@@ -266,8 +270,8 @@ still include lending done through a private account.
   `commitPendingOperation` / `rejectPendingOperation` /
   `markPendingOperationSaved`. Never delete a pending operation directly.
 - **Transaction AI V1.3 — Phase A ✅ (2026-10-07):** third test round
-  (`Test/AI_TEST_CASE_LOG_v3.md`, TC-028…TC-040) — read
-  `Test/TRANSACTION_AI_V1_3_AMENDMENTS.md` FIRST for the AI layer now.
+  (`Test/AI_TEST_CASE_LOG.md`, TC-028…TC-040) — read
+  `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.3) FIRST for the AI layer now.
   App-side only: action-vs-label conflicts app-owned (`finalizeConflicts`);
   one message per problem + `issues.ts` `describeIssues` shared by the Logged
   card / Home queue; `toAccount` used as the account for income/lending when

@@ -435,7 +435,7 @@ void _typecheck;
 
 // ═════════════════════════════════════════════════════════════════════════
 // V1.1 — regressions from the SECOND round of real-world testing
-// (Test/AI_TEST_CASE_LOG_v2.md). Each block names the test case it closes.
+// (Test/AI_TEST_CASE_LOG.md). Each block names the test case it closes.
 // ═════════════════════════════════════════════════════════════════════════
 
 // ── TC-021 — one spend must produce exactly one operation ────────────────

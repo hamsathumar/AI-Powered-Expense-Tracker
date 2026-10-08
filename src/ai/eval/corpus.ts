@@ -2,12 +2,12 @@
  * The interpretation eval corpus (audit F8c).
  *
  * Each case is a real utterance the app has to get right, with the end state it
- * must produce. Most are drawn straight from the two real-world test rounds —
- * `Test/AI_TEST_CASE_LOG.md` (TC-001…TC-020) and `AI_TEST_CASE_LOG_v2.md`
- * (TC-021…TC-027) — so the failures that were expensive to find in the first
+ * must produce. Most are drawn straight from the real-world test rounds in
+ * `Test/AI_TEST_CASE_LOG.md` (round 1: TC-001…TC-020, round 2:
+ * TC-021…TC-027) — so the failures that were expensive to find in the first
  * place can never quietly come back. The rest come from the 2026-08-25 audit.
  *
- * V1.3 added EV-16…EV-27 from the third round (`AI_TEST_CASE_LOG_v3.md`,
+ * V1.3 added EV-16…EV-27 from the third round (`AI_TEST_CASE_LOG.md`,
  * TC-028…TC-040). Where the round showed a BAD reading, a "-bad" case replays
  * that exact reading too, proving the app-side backstop catches it even when
  * the model repeats the mistake.

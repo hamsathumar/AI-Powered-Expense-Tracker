@@ -1,6 +1,6 @@
 /**
  * Regression tests for the 2026-08-25 AI-pipeline audit, Phase 2
- * (findings F3, F4-grammar, F5, F10 — see Test/TRANSACTION_AI_V1_2_AMENDMENTS.md).
+ * (findings F3, F4-grammar, F5, F10 — see Test/TRANSACTION_AI_AMENDMENTS.md (V1.2)).
  *
  * F3  — an intent voiced without a resolvable amount is QUEUED (null amount,
  *       un-committable) instead of being silently discarded.

@@ -1,6 +1,6 @@
 /**
  * Transaction AI V1.3 — Phase A (app-side fixes from the third real-world
- * round, `Test/AI_TEST_CASE_LOG_v3.md`). Every block names the test case it
+ * round, `Test/AI_TEST_CASE_LOG.md`). Every block names the test case it
  * defends. None of this depends on the prompt: each fix holds no matter how
  * the model phrases its reading.
  *

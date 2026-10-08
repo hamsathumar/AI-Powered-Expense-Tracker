@@ -7,7 +7,7 @@ docs in `Test/`.
 conversational speech — long, complex, mixed-language — and record what the
 user *meant*.
 **Resolution status: CLOSED.** All three phases implemented 2026-08-25 —
-see `Test/TRANSACTION_AI_V1_2_AMENDMENTS.md` (Amendments H–U). Every finding is
+see `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.2, Amendments H–U). Every finding is
 fixed, mitigated, or explicitly declined; the table below records which.
 
 ---
@@ -25,7 +25,7 @@ instead of being recoverable.
 **Docs-drift check:** the feared "contradictory iterations" residue does not
 exist. The pre-V1 pipeline is fully deleted; V1.1 amendments accurately
 describe the code; tests pin all past fixes. Only
-`Test/CURRENT_AI_ARCHITECTURE_AUDIT.md` is stale (it describes the pre-V1
+`Test/archive/CURRENT_AI_ARCHITECTURE_AUDIT.md` is stale (it describes the pre-V1
 code) — now carries a HISTORICAL banner.
 
 ## Verified strengths

@@ -1,12 +1,12 @@
 # Kaasu — Transaction AI Technical Contract V1
 
 > **AMENDED — V1.3 (2026-10-07).** The third real-world round
-> (`Test/AI_TEST_CASE_LOG_v3.md`, TC-028…TC-040) again confirmed every safety
+> (`Test/AI_TEST_CASE_LOG.md`, TC-028…TC-040) again confirmed every safety
 > boundary. Phase A made action-vs-label conflicts app-owned (one per
 > operation, none for a label that names no type), honoured stated clock times
 > (D1), and let the application fill a whole-balance repayment from its own
 > approved ledger with a mandatory confirmation (the AI still never sees a
-> balance). See `Test/TRANSACTION_AI_V1_3_AMENDMENTS.md`.
+> balance). See `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.3).
 
 > **AMENDED — V1.2 (2026-08-25).** Four app-attached `ConflictKind` values
 > were added (`amount_by_reference`, `amount_uncertain`, `date_unresolved`,
@@ -26,7 +26,7 @@
 > `responseSchema` (`src/ai/interpretSchema.ts`), which is the executable copy
 > of this document — **keep the two in step.** It constrains the container
 > only; validation remains authoritative over every value. See
-> `Test/TRANSACTION_AI_V1_2_AMENDMENTS.md`.
+> `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.2).
 
 - **Project:** Kaasu — AI Expense Tracker
 - **Document:** Transaction AI Technical Contract V1
@@ -38,8 +38,8 @@
   - `Test/TRANSACTION_AI_ARCHITECTURE_V1.md`
   - `Test/TRANSACTION_AI_CONSTITUTION_V1.md`
   - `Test/AI_TEST_CASE_LOG.md`
-  - `Test/AI_TEST_ANALYSIS.md`
-  - `Test/CURRENT_AI_ARCHITECTURE_AUDIT.md`
+  - `Test/archive/AI_TEST_ANALYSIS.md`
+  - `Test/archive/CURRENT_AI_ARCHITECTURE_AUDIT.md`
 
 > **This document defines the machine-readable conceptual contract for the AI interpretation boundary. It does not implement the contract.**
 
@@ -50,12 +50,12 @@
 ---
 
 > **AMENDED — V1.1 (2026-08-21).** Second real-world test round
-> (`Test/AI_TEST_CASE_LOG_v2.md`). Contract changes: §15 and §16 gain the
+> (`Test/AI_TEST_CASE_LOG.md`). Contract changes: §15 and §16 gain the
 > **one-sum-one-operation** invariant; §16 gains `endExpression` /
 > `occurrenceCount`; §11 gains reference **usability**; §25 gains name and
 > entity sanitisation. `CONTRACT_SCHEMA_VERSION` stays `v1` — these are
 > additive fields and tightened invariants, not a breaking reshape. Full
-> reasoning: `Test/TRANSACTION_AI_V1_1_AMENDMENTS.md`.
+> reasoning: `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.1).
 
 ## 1. What this contract is (and is not)
 
@@ -713,7 +713,7 @@ Injection resistance is therefore a **structural** property of the contract + do
 | 13 | AI-generated commit instruction | Gemini cannot commit (§22) |
 | 14 | Prompt-injection type replacement (expense→income by embedded instruction) | Conflict must surface; grounding + validation block it (§25, PI) |
 
-**Added by V1.1** *(`AI_TEST_CASE_LOG_v2.md`)*:
+**Added by V1.1** *(`AI_TEST_CASE_LOG.md`)*:
 
 | # | Invalid output | Why rejected |
 |---|---|---|

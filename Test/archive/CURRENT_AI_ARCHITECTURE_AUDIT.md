@@ -9,7 +9,7 @@
 
 **Type:** Evidence-gathering & architecture-discovery. **No source files were modified.**
 **Codebase state:** branch `main`, commit `e990fa9` (audit performed 2026-08-16).
-**Inputs used:** the actual repository under `src/`, and `Test/AI_TEST_ANALYSIS.md`.
+**Inputs used:** the actual repository under `src/`, and `Test/archive/AI_TEST_ANALYSIS.md`.
 
 Throughout, three layers are kept strictly separate:
 

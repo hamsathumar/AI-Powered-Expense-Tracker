@@ -1,6 +1,6 @@
 /**
  * Regression tests for the 2026-08-25 AI-pipeline audit, Phase 1
- * (findings F1, F2, F4, F6 — see Test/TRANSACTION_AI_V1_2_AMENDMENTS.md).
+ * (findings F1, F2, F4, F6 — see Test/TRANSACTION_AI_AMENDMENTS.md (V1.2)).
  *
  * F1 — anaphoric amounts ("that amount") are grounded by reference against
  *      another grounded amount in the SAME utterance, never dropped.
