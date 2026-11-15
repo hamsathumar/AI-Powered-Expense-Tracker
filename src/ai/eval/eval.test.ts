@@ -55,4 +55,27 @@ describe('interpretation eval corpus (offline replay)', () => {
     expect(result.passed).toBe(false);
     expect(result.failures.join(' ')).toContain('expected 2 operation(s), got 1');
   });
+
+  it('a category list accepts any listed answer, but never an invented one', () => {
+    const fruits = EVAL_CORPUS.find((c) => c.id === 'EV-23')!;
+    const reading = (category: string) => ({
+      transcript: 'Bought strawberries for 500 rupees on cash, label it as fruits.',
+      candidates: [
+        {
+          operation: 'expense',
+          amount: { expression: '500 rupees', value: 500, provenance: 'USER_EXPLICIT', state: 'KNOWN' },
+          account: { reference: 'Cash', provenance: 'USER_EXPLICIT', state: 'KNOWN' },
+          category: { reference: category, provenance: 'AI_INTERPRETED', state: 'KNOWN' },
+          name: 'Fruits',
+        },
+      ],
+      specializedOperations: [],
+      unqualifiedIntents: [],
+    });
+    expect(scoreCase(fruits, reading('Food'), EVAL_CONTEXT, EVAL_NOW).passed).toBe(true);
+    expect(scoreCase(fruits, reading('Groceries'), EVAL_CONTEXT, EVAL_NOW).passed).toBe(true);
+    const invented = scoreCase(fruits, reading('Strawberries'), EVAL_CONTEXT, EVAL_NOW);
+    expect(invented.passed).toBe(false);
+    expect(invented.failures.join(' ')).toContain('expected category "Groceries" or "Food", got unresolved');
+  });
 });

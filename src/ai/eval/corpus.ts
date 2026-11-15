@@ -691,7 +691,10 @@ export const EVAL_CORPUS: EvalCase[] = [
         conflicts: [{ kind: 'action_vs_label', note: 'User asked to label the expense as fruits.' }],
       },
     ]),
-    expect: { operations: [{ operation: 'expense', amountMinor: 50000, category: 'Groceries', account: 'Cash', approvable: true }] },
+    // Strawberries are fairly Food or Groceries — the live model picks either
+    // (2026-11-15: Food once, Groceries once). What this case defends — the
+    // label is the name, no conflict — stays strict.
+    expect: { operations: [{ operation: 'expense', amountMinor: 50000, category: ['Groceries', 'Food'], account: 'Cash', approvable: true }] },
   },
   {
     id: 'EV-24',

@@ -36,7 +36,10 @@ export interface ExpectedOperation {
   amountMinor: number | null;
   /** Expected RESOLVED entity names. `null` asserts "must not be resolved". */
   account?: string | null;
-  category?: string | null;
+  /** A list means "any one of these" — for a purchase where two listed
+   *  categories are equally fair (strawberries: Food or Groceries). It still
+   *  must resolve to a LISTED category; an invented one fails. */
+  category?: string | string[] | null;
   person?: string | null;
   direction?: LendingDirection;
   /** Whether the safety gate should let this through as-is. */
@@ -106,7 +109,7 @@ function checkOperation(op: ResolvedOperation, want: ExpectedOperation): string[
 
   const entity = (
     field: 'account' | 'category' | 'person',
-    expected: string | null | undefined,
+    expected: string | string[] | null | undefined,
   ) => {
     if (expected === undefined) return;
     const ref = op[field];
@@ -115,8 +118,10 @@ function checkOperation(op: ResolvedOperation, want: ExpectedOperation): string[
       if (actual !== null) failures.push(`${label}: ${field} should NOT resolve, but resolved to "${actual}"`);
       return;
     }
-    if (actual?.toLowerCase() !== expected.toLowerCase()) {
-      failures.push(`${label}: expected ${field} "${expected}", got ${actual === null ? 'unresolved' : `"${actual}"`}`);
+    const allowed = Array.isArray(expected) ? expected : [expected];
+    if (!allowed.some((e) => actual?.toLowerCase() === e.toLowerCase())) {
+      const want = allowed.map((e) => `"${e}"`).join(' or ');
+      failures.push(`${label}: expected ${field} ${want}, got ${actual === null ? 'unresolved' : `"${actual}"`}`);
     }
   };
 

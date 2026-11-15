@@ -341,7 +341,13 @@ still include lending done through a private account.
   every capture) and is ≥10 % smaller; else the 16-bit WAV. `interpretVoice`
   resends the WAV once if Gemini answers the FLAC with HTTP 400. Timing gains
   a "compress" stage and the WAV/FLAC sizes. `flac.test.ts` cross-checks
-  against ffmpeg when installed (skips otherwise).
+  against ffmpeg when installed (skips otherwise). Measured: Wi-Fi 15 s,
+  mobile 18 s (from 28 / 54 s); FLAC ≈ 39 % of the 16-bit WAV.
+- **Live eval 29/31 → category rule (2026-11-15):** both misses were the
+  category pick, and both passed on an unchanged re-run (model variance).
+  Prompt + schema now say a category is EXACTLY a listed name (closest one,
+  never the item); the scorer accepts a list of equally fair categories
+  (EV-23: Groceries or Food) but still fails an invented one.
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -349,6 +355,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 660 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 661 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.
