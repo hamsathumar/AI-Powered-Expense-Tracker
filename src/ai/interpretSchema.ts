@@ -118,7 +118,10 @@ const candidate = {
     amount,
     account: entityRef,
     toAccount: entityRef,
-    category: entityRef,
+    category: {
+      ...entityRef,
+      description: 'EXACTLY one of the listed category names (the closest one), never the item itself; null only if none fits.',
+    },
     person: entityRef,
     direction: { type: 'STRING', enum: DIRECTIONS },
     dateExpression,

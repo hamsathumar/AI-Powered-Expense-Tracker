@@ -7,7 +7,7 @@ Every amendment made to the Transaction AI V1 blueprint (`TRANSACTION_AI_CONSTIT
 | [V1.1](#part-v11) | 2026-08-21 | Test round 2 — TC-021 … TC-027 | A – G |
 | [V1.2](#part-v12) | 2026-08-25 | Pipeline audit (F1–F11), Phases 1–3 | H – U |
 | [V1.3](#part-v13) | 2026-10-07 | Test round 3 — TC-028 … TC-040, Phases A–C | V – AH |
-| [V1.4](#part-v14) | 2026-11-15 | Test round 4 — TC-041 … TC-046; addenda TC-047, TC-048 | AI – AQ |
+| [V1.4](#part-v14) | 2026-11-15 | Test round 4 — TC-041 … TC-046; addenda TC-047, TC-048; live-eval follow-up | AI – AR |
 
 Test evidence for every round: `AI_TEST_CASE_LOG.md`. The audit behind V1.2: `AI_PIPELINE_AUDIT_2026-08-25.md`.
 
@@ -1702,3 +1702,23 @@ the saving came from **32-bit float → 16-bit**, not from resampling.
   sample-for-sample on the phone and is ≥10 % smaller; a Gemini 400 on the
   FLAC resends the 16-bit WAV once. Gemini lists `audio/flac` as a supported
   audio type. The audio Gemini hears is unchanged in every case.
+
+## 13. Addendum — Amendment AR: categories come from the list *(live eval, 2026-11-15)*
+
+**Observed.** First live eval after V1.4: 29/31. EV-02 — the model returned an
+invented category "Stationeries" (not on the list), so the card would ask
+"Pick a category"; EV-23 — strawberries filed under Food instead of the
+expected Groceries. Both passed on an unchanged re-run: model variance, not a
+regression.
+
+**Amendment.**
+- **Prompt:** rule CATEGORIES COME FROM THE LIST — `category.reference` is
+  exactly one of the listed names, the closest one; the item itself is the
+  `name`, never the category; null only if nothing fits. The response schema's
+  category field says the same.
+- **Eval:** `ExpectedOperation.category` may be a list of equally fair answers
+  (EV-23: Groceries or Food). It must still resolve to a LISTED category — an
+  invented one fails (tested in `eval.test.ts`).
+
+No app-side behaviour changed: an unlisted category still resolves to nothing
+and the card asks the user to pick, as before.
