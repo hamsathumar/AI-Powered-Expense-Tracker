@@ -422,3 +422,207 @@ describe('TC-046 — "…and Nuski paid it"', () => {
     expect(evaluateApproval(operations[0]!).approvable).toBe(true);
   });
 });
+
+// ── TC-047 (speed-test device run, 2026-11-15) ────────────────────────────
+describe('TC-047 — "withdrew 4000 from BOC. From that amount I lent Hafsa 1500 and lent Nuski 500…"', () => {
+  const withHafsa = () => ctx({ people: [...ctx().people, { id: 'p-hafsa', name: 'Hafsa' }] });
+  const t =
+    "So all the transaction I'm going to say was happened last Friday. So first of all in the morning I spent 250 rupees on pikme and Nuski paid it. And then I withdrawn 4000 rupees from BOC account. From that amount I lent Hafsa 1500 and lent Nuski 500 and paid 500 for biriyani using cash. Then another 400 for bus fare using cash and spent 100 rupees on a milk packet using cash and then other three sorry 530 rupees on bus fare using cash.";
+  const friday = { expression: 'last Friday', kind: 'relative' };
+  const lend = (person: string, value: number) => ({
+    operation: 'lending',
+    direction: 'lend',
+    amount: said(String(value), value),
+    person: ref(person),
+    dateExpression: friday,
+    name: `Lending to ${person}`,
+    evidence: [{ sourceText: `lent ${person} ${value}`, supports: `lend ${value}` }],
+  });
+  const cashSpend = (name: string, value: number) => ({
+    operation: 'expense',
+    amount: said(String(value), value),
+    account: ref('Cash'),
+    category: ref('Food'),
+    dateExpression: friday,
+    name,
+  });
+  // The model's reading from the shared report, field for field where it matters.
+  const deviceReading = {
+    transcript: t,
+    candidates: [
+      {
+        operation: 'expense',
+        amount: said('250 rupees', 250),
+        category: ref('Food'),
+        dateExpression: { expression: 'last Friday morning', kind: 'relative' },
+        name: 'Pikme',
+        paidBy: ref('Nuski'),
+      },
+      {
+        operation: 'transfer',
+        amount: said('4000 rupees', 4000),
+        account: ref('BOC'),
+        toAccount: { reference: 'Cash', provenance: 'AI_INTERPRETED', state: 'INFERRED' },
+        dateExpression: friday,
+        name: 'ATM Withdrawal',
+      },
+      lend('Hafsa', 1500),
+      lend('Nuski', 500),
+      cashSpend('Biriyani', 500),
+      cashSpend('Bus Fare', 400),
+      cashSpend('Milk Packet', 100),
+      cashSpend('Bus Fare', 530),
+    ],
+  };
+
+  it('both loans come out of the withdrawn cash; all eight cards are ready', () => {
+    const c = withHafsa();
+    const base: ResolveContext = { ...c, accounts: [...c.accounts, { id: 'acc-boc', name: 'BOC', kind: 'bank' }] };
+    const { operations } = run(deviceReading, base);
+    expect(operations).toHaveLength(8);
+    const hafsa = operations.find((o) => o.name === 'Lending to Hafsa')!;
+    const nuski = operations.find((o) => o.name === 'Lending to Nuski')!;
+    expect(hafsa.account?.reference).toBe('Cash');
+    expect(nuski.account?.reference).toBe('Cash');
+    expect(operations.every((o) => evaluateApproval(o).approvable)).toBe(true);
+  });
+
+  const accounts: ResolveContext = {
+    ...withHafsa(),
+    accounts: [...withHafsa().accounts, { id: 'acc-boc', name: 'BOC', kind: 'bank' }],
+  };
+  const withdrawal = (value = 4000) => ({
+    operation: 'transfer',
+    amount: said(String(value), value),
+    account: ref('BOC'),
+    toAccount: ref('Cash'),
+    name: 'ATM Withdrawal',
+  });
+
+  it('a "from it" at the END of another clause does not reach a loan before it', () => {
+    const transcript = 'Withdrew 4000 from BOC. I lent Hafsa 1500 and paid 200 for tea from it.';
+    const { operations } = run(
+      { transcript, candidates: [withdrawal(), lend('Hafsa', 1500), { operation: 'expense', amount: said('200', 200), category: ref('Food'), name: 'Tea' }] },
+      accounts,
+    );
+    expect(operations[1]!.account?.status).not.toBe('resolved'); // the loan: not covered
+    expect(operations[2]!.account?.reference).toBe('Cash'); // the tea: its own clause says so
+  });
+
+  it('a transfer into an ordinary account funds what follows (BOC, not only Cash)', () => {
+    const transcript = 'Transferred 5000 from Commercial Bank to BOC. From that I paid back Sham 3000.';
+    const { operations } = run(
+      {
+        transcript,
+        candidates: [
+          { operation: 'transfer', amount: said('5000', 5000), account: ref('Commercial Bank'), toAccount: ref('BOC'), name: 'Transfer to BOC' },
+          { operation: 'lending', direction: 'borrow_repayment_made', amount: said('3000', 3000), person: ref('Sham'), name: 'Repaid Sham' },
+        ],
+      },
+      accounts,
+    );
+    expect(operations[1]!.account?.reference).toBe('BOC');
+  });
+
+  it('never: over a stated account, onto money coming IN, or from two possible sources', () => {
+    const stated = run(
+      {
+        transcript: 'Withdrew 4000 from BOC. From that amount I lent Hafsa 1500 from Commercial Bank.',
+        candidates: [withdrawal(), { ...lend('Hafsa', 1500), account: ref('Commercial Bank') }],
+      },
+      accounts,
+    );
+    expect(stated.operations[1]!.account?.reference).toBe('Commercial Bank');
+
+    const borrow = run(
+      {
+        transcript: 'Withdrew 4000 from BOC. From that amount I borrowed 500 from Sham.',
+        candidates: [withdrawal(), { operation: 'lending', direction: 'borrow', amount: said('500', 500), person: ref('Sham'), name: 'Borrowed from Sham' }],
+      },
+      accounts,
+    );
+    expect(borrow.operations[1]!.account?.status).not.toBe('resolved');
+
+    const two = run(
+      {
+        transcript: 'Withdrew 4000 from BOC and got 2000 salary into Commercial Bank. From that amount I lent Hafsa 1500.',
+        candidates: [
+          withdrawal(),
+          { operation: 'income', amount: said('2000', 2000), account: ref('Commercial Bank'), category: ref('Rent'), name: 'Salary' },
+          lend('Hafsa', 1500),
+        ],
+      },
+      accounts,
+    );
+    expect(two.operations[2]!.account?.status).not.toBe('resolved');
+  });
+});
+
+// ── Phase 1a speed-test run: a part of day dropped for one transaction ─────
+describe('part of day said for ONE transaction is kept (speed-test mobile run)', () => {
+  const t =
+    'All of these were yesterday. In the morning I spent 350 rupees on breakfast using cash, then I paid 1,200 rupees for groceries from Commercial Bank. In the afternoon I bought a phone charger for 2,000 rupees from BOC. And finally I spent 600 rupees on dinner using cash.';
+  const day = (expression: string | null) => (expression ? { expression, kind: 'relative' } : undefined);
+  const spend = (name: string, value: number, account: string, date: string | null = 'yesterday') => ({
+    operation: 'expense',
+    amount: said(`${value} rupees`, value),
+    account: ref(account),
+    category: ref('Food'),
+    ...(day(date) ? { dateExpression: day(date) } : {}),
+    name,
+  });
+  const boc = (): ResolveContext => ({ ...ctx(), accounts: [...ctx().accounts, { id: 'acc-boc', name: 'BOC', kind: 'bank' }] });
+
+  it('the device reading ("yesterday" on all four) gets its morning and afternoon back', () => {
+    const { operations, issues } = run(
+      {
+        transcript: t,
+        candidates: [
+          spend('Breakfast', 350, 'Cash'),
+          spend('Groceries', 1200, 'Commercial Bank'),
+          spend('Phone Charger', 2000, 'BOC'),
+          spend('Dinner', 600, 'Cash'),
+        ],
+      },
+      boc(),
+    );
+    expect(operations.map((o) => o.dateExpression)).toEqual([
+      'yesterday in the morning',
+      'yesterday',
+      'yesterday in the afternoon',
+      'yesterday',
+    ]);
+    expect(issues.filter((i) => /time of day/.test(i))).toHaveLength(2);
+    // And it resolves to the usual times (V1.4 AM).
+    const at = (e: string) => new Date(resolveDateExpression(e, NOW).iso).getHours();
+    expect(at(operations[0]!.dateExpression!)).toBe(8);
+    expect(at(operations[2]!.dateExpression!)).toBe(14);
+  });
+
+  it('never: over a time the model kept, onto a clause without one, or onto a different day', () => {
+    const kept = run({ transcript: t, candidates: [spend('Breakfast', 350, 'Cash', 'yesterday at 7 am')] }, boc());
+    expect(kept.operations[0]!.dateExpression).toBe('yesterday at 7 am');
+
+    const plain = run({ transcript: t, candidates: [spend('Groceries', 1200, 'Commercial Bank')] }, boc());
+    expect(plain.operations[0]!.dateExpression).toBe('yesterday');
+
+    const otherDay = run(
+      { transcript: 'Spent 300 on dinner last night.', candidates: [spend('Dinner', 300, 'Cash', 'today')] },
+      boc(),
+    );
+    expect(otherDay.operations[0]!.dateExpression).toBe('today');
+  });
+
+  it('"last night" with the day already "yesterday" becomes "last night"; with no day, the phrase alone', () => {
+    const night = run(
+      { transcript: 'Spent 300 on dinner last night.', candidates: [spend('Dinner', 300, 'Cash', 'yesterday')] },
+      boc(),
+    );
+    expect(night.operations[0]!.dateExpression).toBe('last night');
+    const none = run(
+      { transcript: 'In the morning I spent 350 on breakfast.', candidates: [spend('Breakfast', 350, 'Cash', null)] },
+      boc(),
+    );
+    expect(none.operations[0]!.dateExpression).toBe('in the morning');
+  });
+});

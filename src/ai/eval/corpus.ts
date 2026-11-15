@@ -52,6 +52,7 @@ export const EVAL_CONTEXT: ResolveContext = {
     { id: 'p-nuski', name: 'Nuski' },
     { id: 'p-sham', name: 'Sham' },
     { id: 'p-mayees', name: 'Mayees Mowlavi' },
+    { id: 'p-hafsa', name: 'Hafsa' },
   ],
 };
 
@@ -916,5 +917,28 @@ export const EVAL_CORPUS: EvalCase[] = [
       },
     ]),
     expect: { operations: [{ operation: 'expense', amountMinor: 16000, account: 'Cash', category: 'Food', approvable: true }] },
+  },
+  {
+    id: 'EV-34',
+    origin: 'TC-047',
+    what: 'an ATM withdrawal, then "from that amount I lent…": the loans come out of Cash',
+    utterance: 'I withdrew 4000 rupees from BOC. From that amount I lent Hafsa 1500 and lent Nuski 500 and paid 500 for biriyani using cash.',
+    modelOutput: reading(
+      'I withdrew 4000 rupees from BOC. From that amount I lent Hafsa 1500 and lent Nuski 500 and paid 500 for biriyani using cash.',
+      [
+        { operation: 'transfer', amount: explicit('4000 rupees', 4000), account: ref('BOC'), toAccount: ref('Cash'), name: 'ATM Withdrawal' },
+        { operation: 'lending', direction: 'lend', amount: explicit('1500', 1500), person: ref('Hafsa'), name: 'Lent to Hafsa' },
+        { operation: 'lending', direction: 'lend', amount: explicit('500', 500), person: ref('Nuski'), name: 'Lent to Nuski' },
+        { operation: 'expense', amount: explicit('500', 500), account: ref('Cash'), category: ref('Food'), name: 'Biriyani' },
+      ],
+    ),
+    expect: {
+      operations: [
+        { operation: 'transfer', amountMinor: 400000, account: 'BOC', approvable: true },
+        { operation: 'lending', amountMinor: 150000, account: 'Cash', person: 'Hafsa', direction: 'lend', approvable: true },
+        { operation: 'lending', amountMinor: 50000, account: 'Cash', person: 'Nuski', direction: 'lend', approvable: true },
+        { operation: 'expense', amountMinor: 50000, account: 'Cash', category: 'Food', approvable: true },
+      ],
+    },
   },
 ];

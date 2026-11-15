@@ -12,6 +12,7 @@
  */
 import { formatAmount } from '@/domain/money';
 
+import { resolveDateExpression } from './dates';
 import { isSuspiciousEntityReference } from './injection';
 import { deriveName } from './naming';
 import type {
@@ -375,34 +376,65 @@ const FROM_THAT_MONEY =
 
 /**
  * An expense the user paid "from it" / "from the money I borrowed" takes the
- * account of the money that came in earlier in the same utterance (a borrow,
- * a repayment received, or income) — but only when that is ONE resolved
- * account, and only for an expense whose own clause says so (found by its
- * amount). Anything else is left for the user to pick. Applied after every
- * operation is resolved, because it reads a sibling's account.
+ * account of the money that came in earlier in the same utterance — but only
+ * when that is ONE resolved account. Anything else is left for the user to
+ * pick. Applied after every operation is resolved, because it reads a
+ * sibling's account.
+ *
+ * Money in: income, a borrow, a repayment received — and (V1.4, TC-047) the
+ * DESTINATION of a transfer: "withdrew 4000 from BOC. From that amount I lent
+ * Hafsa 1500" means the loan came out of Cash.
+ *
+ * Money out: an expense — and (TC-047) money the user lends or repays.
+ *
+ * Which ones it covers: an operation whose own clause says "from it" (found by
+ * its amount), or — TC-047 — any operation in a sentence that OPENS with the
+ * phrase before its amount ("From that amount I lent Hafsa 1500 and lent
+ * Nuski 500 …"), since the phrase governs the whole sentence. A stated
+ * account is never overridden.
  */
 export function inheritFundingAccount(ops: ResolvedOperation[], transcript: string): ResolvedOperation[] {
   if (!transcript || !FROM_THAT_MONEY.test(transcript)) return ops;
+  const resolvedKey = (r: ResolvedRef | null | undefined) =>
+    r?.status === 'resolved' && r.id ? `${r.id}\u0000${r.reference ?? ''}` : null;
   const funding = new Set(
     ops
-      .filter(
-        (o) =>
-          (o.operation === 'income' ||
-            (o.operation === 'lending' && (o.direction === 'borrow' || o.direction === 'lend_repayment_received'))) &&
-          o.account?.status === 'resolved' &&
-          o.account.id,
-      )
-      .map((o) => `${o.account!.id}\u0000${o.account!.reference ?? ''}`),
+      .map((o) => {
+        if (o.operation === 'income') return resolvedKey(o.account);
+        if (o.operation === 'lending' && (o.direction === 'borrow' || o.direction === 'lend_repayment_received')) {
+          return resolvedKey(o.account);
+        }
+        if (o.operation === 'transfer') return resolvedKey(o.toAccount);
+        return null;
+      })
+      .filter((k): k is string => k !== null),
   );
   if (funding.size !== 1) return ops;
   const [id, reference] = [...funding][0]!.split('\u0000') as [string, string];
   const clauses = transcript.split(/[,;.!?]|\band\b|\bthen\b/i);
+  const sentences = transcript.split(/[.;!?]+/);
+  const spendsMoney = (o: ResolvedOperation) =>
+    o.operation === 'expense' ||
+    (o.operation === 'lending' && (o.direction === 'lend' || o.direction === 'borrow_repayment_made'));
   return ops.map((o) => {
-    if (o.operation !== 'expense' || o.amountMinor === null) return o;
+    if (!spendsMoney(o) || o.amountMinor === null) return o;
     if (o.account && (o.account.status === 'resolved' || o.account.reference)) return o;
-    const digits = String(Math.round(o.amountMinor / 100));
-    const own = clauses.filter((c) => new RegExp(`(^|\\D)${digits}(\\D|$)`).test(c));
-    if (!own.some((c) => FROM_THAT_MONEY.test(c))) return o;
+    const amount = new RegExp(`(^|\\D)${Math.round(o.amountMinor / 100)}(\\D|$)`);
+    const inOwnClause = clauses.some((c) => amount.test(c) && FROM_THAT_MONEY.test(c));
+    const inLedSentence = sentences.some((sentence) => {
+      const phrase = sentence.match(FROM_THAT_MONEY);
+      const figure = sentence.match(amount);
+      return (
+        phrase?.index !== undefined &&
+        figure?.index !== undefined &&
+        phrase.index < figure.index &&
+        // The phrase opens the sentence ("From that amount I …"), so it
+        // governs everything after it — not a "from it" at the tail of
+        // someone else's clause.
+        /^\s*(?:and\s+|then\s+|so\s+)?$/i.test(sentence.slice(0, phrase.index))
+      );
+    });
+    if (!inOwnClause && !inLedSentence) return o;
     return { ...o, account: { reference: reference || null, id, status: 'resolved', options: [] } };
   });
 }
@@ -819,6 +851,50 @@ export function resolveSpecialized(op: SpecializedOperation, ctx: ResolveContext
   };
 }
 
+// ── Phase 1a (speed-test run): "In the morning I spent 350 on breakfast" ──
+/** A part of day said for one transaction. */
+const PART_OF_DAY_PHRASE =
+  /\b(?:in\s+the\s+(?:morning|afternoon|evening)|this\s+(?:morning|afternoon|evening)|at\s+(?:night|noon|midnight)|tonight|last\s+night)\b/i;
+/** The date expression already carries a time of day or a clock time. */
+const HAS_TIME_OF_DAY =
+  /\b(?:morning|afternoon|evening|night|tonight|noon|midday|midnight)\b|\d{1,2}\s*(?:[:.]\d{2}|a\.?m\b|p\.?m\b|o'?\s?clock)/i;
+
+/**
+ * The model sometimes keeps the shared day ("All of these were yesterday")
+ * but drops a part of day said for ONE transaction ("In the morning I spent
+ * 350 on breakfast") — the same sentence kept it on Wi-Fi and lost it on
+ * mobile data. When the operation's own clause (found by its amount) has a
+ * part-of-day phrase and its date expression has no time, the phrase is added
+ * back — only when the result still resolves, to the SAME day, without a
+ * morning-or-evening question. Ordinary operations only.
+ */
+function withSpokenPartOfDay(op: ResolvedOperation, clauses: string[], now: Date): ResolvedOperation {
+  if (op.specialized || op.amountMinor === null) return op;
+  if (op.dateExpression && HAS_TIME_OF_DAY.test(op.dateExpression)) return op;
+  const amount = new RegExp(`(^|\\D)${Math.round(op.amountMinor / 100)}(\\D|$)`);
+  const phrase = clauses
+    .filter((c) => amount.test(c.replace(/(\d),(\d{3})/g, '$1$2')))
+    .map((c) => c.match(PART_OF_DAY_PHRASE)?.[0])
+    .find((p): p is string => !!p);
+  if (!phrase) return op;
+  const part = phrase.trim().toLowerCase();
+  const day = op.dateExpression ? resolveDateExpression(op.dateExpression, now) : null;
+  if (day && !day.resolved) return op;
+  const dayOf = (iso: string) => iso.slice(0, 10);
+  const options = op.dateExpression ? [`${op.dateExpression} ${part}`, part] : [part];
+  for (const next of options) {
+    const r = resolveDateExpression(next, now);
+    if (!r.resolved || r.timeNeedsConfirm) continue;
+    const local = (iso: string) => {
+      const d = new Date(iso);
+      return dayOf(new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString());
+    };
+    if (day && local(r.iso) !== local(day.iso)) continue;
+    return { ...op, dateExpression: next };
+  }
+  return op;
+}
+
 /**
  * Resolve a whole validated interpretation — the ONE path both the app
  * (`interpretVoice`) and the eval harness (`score.ts`) use, so a replay
@@ -875,6 +951,8 @@ export function resolveInterpretation(
     return true;
   });
 
+  const clauses = transcript.split(/[,;.!?](?!\d{3})|\band\b|\bthen\b/i);
+  const now = new Date();
   const operations = inheritFundingAccount(
     [
       ...candidates.map((c) => resolveCandidate(c, ctx, scope)),
@@ -882,6 +960,12 @@ export function resolveInterpretation(
       ...uniqueIntents,
     ],
     transcript,
-  ).map((o) => ({ ...o, transcript }));
+  ).map((o) => {
+    const timed = withSpokenPartOfDay(o, clauses, now);
+    if (timed.dateExpression !== o.dateExpression) {
+      issues.push(`time of day for "${o.name}" taken from what the user said ("${timed.dateExpression}")`);
+    }
+    return { ...timed, transcript };
+  });
   return { operations, issues };
 }

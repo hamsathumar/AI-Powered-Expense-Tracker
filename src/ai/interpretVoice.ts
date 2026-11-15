@@ -38,6 +38,7 @@ import {
 } from '@/db/queries/people';
 import { insertPendingOperations } from '@/db/queries/pendingOperations';
 import { getCurrencyCode, getGeminiModel } from '@/db/queries/settings';
+import { type AudioFacts, shrinkWavBase64 } from '@/ai/audio';
 import { base64Bytes, emptyMeter, type StageTiming, stopwatch, type VoiceTimings } from '@/ai/timing';
 
 /** Default capture format (expo-audio recorder). The speech-recognition
@@ -217,8 +218,20 @@ export async function interpretVoice(
   const apiKey = await getGeminiApiKey();
   if (!apiKey) throw new Error('Add your Gemini API key in Settings first.');
 
-  const [model, base64, ctx] = await Promise.all([getGeminiModel(), fileToBase64(audioUri), loadContext()]);
+  const [model, recorded, ctx] = await Promise.all([getGeminiModel(), fileToBase64(audioUri), loadContext()]);
   stages.push({ stage: 'prepare', ms: lap() });
+
+  // Phase 1a: send 16 kHz mono — what Gemini uses anyway — instead of the
+  // ~44.1 kHz WAV iOS records. Anything not understood is sent as recorded.
+  let base64 = recorded;
+  let audio: AudioFacts | null = null;
+  if (/wav/i.test(audioMimeType)) {
+    lap = stopwatch();
+    const shrunk = shrinkWavBase64(recorded);
+    base64 = shrunk.base64;
+    audio = shrunk.facts;
+    stages.push({ stage: 'shrink', ms: lap() });
+  }
 
   const interpretMeter = emptyMeter();
   const raw = await interpretAudioWithGemini({
@@ -269,6 +282,7 @@ export async function interpretVoice(
     queuedMs: Number.isNaN(queuedAtMs) ? null : Math.max(0, startedAt - queuedAtMs),
     attempt: job?.attempt ?? 1,
     audioBytes: base64Bytes(base64),
+    audio,
     previousError: job?.previousError ?? null,
     stages,
   };

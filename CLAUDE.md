@@ -307,7 +307,9 @@ still include lending done through a private account.
   the model's spelling of the same words (`interpretation/labels.ts`, AL). A
   part of day with no hour gets its usual time (AM — reverses D1's "invent no
   hour"). Review screen always offers "Paid by". Tests:
-  `src/ai/interpretation/v14.test.ts`, corpus EV-29…EV-33.
+  `src/ai/interpretation/v14.test.ts`, corpus EV-29…EV-33. Addendum AP
+  (TC-047): "from that amount" after a withdrawal/transfer funds loans and
+  repayments too (`inheritFundingAccount`), corpus EV-34.
 - **Voice speed — Phase 0, measurement (2026-11-15):** every capture's
   diagnostics now record where the time went (`src/ai/timing.ts`): per-stage
   durations (prepare, interpret, critic, repair, resolve, save), Gemini's own
@@ -318,6 +320,13 @@ still include lending done through a private account.
   from these numbers; the multi-agent split was considered and set aside (it
   adds a sequential round trip, multiplies calls against the free-tier rate
   limit, and breaks whole-utterance backstops).
+- **Voice speed — Phase 1a (2026-11-15):** measured cause = upload (26 s Wi-Fi
+  vs 53 s mobile, same Gemini work; iOS records ~44.1 kHz WAV despite the
+  16 kHz request). `src/ai/audio.ts` (pure, own base64 codec) converts the WAV
+  to 16 kHz mono 16-bit before upload (~2.7× smaller), falling back to the
+  original on anything unexpected; Timing shows length/format/sizes. Same PR:
+  amendment AQ (TC-048) — a part of day said for one transaction is kept
+  (prompt rule + `withSpokenPartOfDay` backstop).
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -325,6 +334,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 622 tests, plus 30 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 640 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.
