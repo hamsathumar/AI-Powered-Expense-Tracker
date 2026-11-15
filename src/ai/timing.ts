@@ -42,6 +42,8 @@ export type StageName =
   | 'prepare'
   /** Converting the recording to 16 kHz mono before upload (Phase 1a). */
   | 'shrink'
+  /** Lossless FLAC encode + sample-for-sample verification (Phase 2). */
+  | 'compress'
   /** The main audio → JSON call. */
   | 'interpret'
   /** The compound-utterance auditor. */
@@ -92,6 +94,7 @@ export function base64Bytes(base64: string): number {
 const STAGE_WORDS: Record<StageName, string> = {
   prepare: 'Getting ready (recording, accounts, people)',
   shrink: 'Shrinking the recording for upload',
+  compress: 'Compressing it (lossless FLAC, checked)',
   interpret: 'Gemini reading the recording',
   critic: 'Second check (critic)',
   repair: 'Re-read the critic asked for',
@@ -117,13 +120,21 @@ function describeCall(call: CallMeter): string {
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
 
-/** "45 s recording, 3923 KB → 1424 KB sent (44.1 kHz stereo → 16 kHz mono)". */
+/** "61 s recording, 3842 KB → 1919 KB sent (16 kHz mono 32-bit → 16 kHz mono 16-bit)". */
 export function describeAudio(a: AudioFacts): string {
   const length = a.durationSec !== null ? `${Math.round(a.durationSec)} s recording, ` : 'recording ';
   if (!a.shrunk) return `${length}${kb(a.sentBytes)} sent as recorded`;
   const rate = a.sampleRate !== null ? `${(a.sampleRate / 1000).toFixed(a.sampleRate % 1000 ? 1 : 0)} kHz` : '?';
   const channels = a.channels === 1 ? 'mono' : a.channels === 2 ? 'stereo' : `${a.channels ?? '?'} ch`;
-  return `${length}${kb(a.originalBytes)} → ${kb(a.sentBytes)} sent (${rate} ${channels} → 16 kHz mono)`;
+  // The bit depth is shown too: a 16 kHz recording at 32-bit read as
+  // "16 kHz mono → 16 kHz mono", which hid what actually changed.
+  const bits = a.bitsPerSample !== null ? ` ${a.bitsPerSample}-bit` : '';
+  const format = `(${rate} ${channels}${bits} → 16 kHz mono 16-bit)`;
+  if (a.format === 'flac' && a.wavBytes !== undefined) {
+    return `${length}${kb(a.originalBytes)} → ${kb(a.wavBytes)} WAV → ${kb(a.sentBytes)} sent as lossless FLAC ${format}`;
+  }
+  const rejected = a.flacRejected ? ' — Gemini refused the FLAC, so the WAV was sent' : '';
+  return `${length}${kb(a.originalBytes)} → ${kb(a.sentBytes)} sent ${format}${rejected}`;
 }
 
 /** One plain line per stage, slowest marked — shared by the sheet and the report. */
@@ -160,6 +171,9 @@ function parseAudio(raw: unknown): AudioFacts | null {
     originalBytes: a.originalBytes,
     sentBytes: a.sentBytes,
     shrunk: a.shrunk === true,
+    ...(a.format === 'flac' || a.format === 'wav' ? { format: a.format } : {}),
+    ...(typeof a.wavBytes === 'number' ? { wavBytes: a.wavBytes } : {}),
+    ...(a.flacRejected === true ? { flacRejected: true } : {}),
   };
 }
 

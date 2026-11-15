@@ -17,6 +17,8 @@
  * plain node.
  */
 
+import { encodeFlacVerified } from '@/ai/flac';
+
 export const TARGET_SAMPLE_RATE = 16_000;
 
 export interface WavInfo {
@@ -41,49 +43,95 @@ export interface AudioFacts {
   sentBytes: number;
   /** True when the recording was converted; false when sent as captured. */
   shrunk: boolean;
+  /** Phase 2: the container actually sent. Absent on older records (= WAV). */
+  format?: 'wav' | 'flac';
+  /** Phase 2: size of the 16-bit WAV, when FLAC was sent instead of it. */
+  wavBytes?: number;
+  /** Phase 2: Gemini refused the FLAC, so the WAV was sent after all. */
+  flacRejected?: boolean;
 }
 
 // ── base64 ───────────────────────────────────────────────────────────────
+// Phase 1b: typed-array codec. The first version rebuilt strings and used a
+// regex over the whole ~5 MB payload, which was most of the 1.3 s the phone
+// spent here. Output is byte-for-byte identical.
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const LOOKUP = new Int16Array(128).fill(-1);
-for (let i = 0; i < ALPHABET.length; i++) LOOKUP[ALPHABET.charCodeAt(i)] = i;
+const ENCODE = new Uint8Array(64);
+const LOOKUP = new Uint8Array(256).fill(255);
+for (let i = 0; i < ALPHABET.length; i++) {
+  ENCODE[i] = ALPHABET.charCodeAt(i);
+  LOOKUP[ALPHABET.charCodeAt(i)] = i;
+}
+
+/** Character codes of a base64 string, without whitespace/padding/stray characters. */
+function base64Codes(base64: string): Uint8Array {
+  const codes = new Uint8Array(base64.length);
+  let n = 0;
+  for (let i = 0; i < base64.length; i++) {
+    const c = base64.charCodeAt(i);
+    if (c < 256 && LOOKUP[c] !== 255) codes[n++] = c;
+  }
+  return codes.subarray(0, n);
+}
 
 export function base64ToBytes(base64: string): Uint8Array {
-  const clean = base64.replace(/[^A-Za-z0-9+/]/g, '');
-  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  const codes = base64Codes(base64);
+  const len = codes.length;
+  const out = new Uint8Array(Math.floor((len * 3) / 4));
   let o = 0;
-  for (let i = 0; i < clean.length; i += 4) {
-    const a = LOOKUP[clean.charCodeAt(i)]!;
-    const b = LOOKUP[clean.charCodeAt(i + 1)] ?? -1;
-    const c = i + 2 < clean.length ? LOOKUP[clean.charCodeAt(i + 2)]! : -1;
-    const d = i + 3 < clean.length ? LOOKUP[clean.charCodeAt(i + 3)]! : -1;
-    if (b < 0) break;
+  let i = 0;
+  for (; i + 4 <= len; i += 4) {
+    const a = LOOKUP[codes[i]!]!;
+    const b = LOOKUP[codes[i + 1]!]!;
+    const c = LOOKUP[codes[i + 2]!]!;
+    const d = LOOKUP[codes[i + 3]!]!;
     out[o++] = (a << 2) | (b >> 4);
-    if (c >= 0) out[o++] = ((b & 15) << 4) | (c >> 2);
-    if (d >= 0) out[o++] = ((c & 3) << 6) | d;
+    out[o++] = ((b & 15) << 4) | (c >> 2);
+    out[o++] = ((c & 3) << 6) | d;
+  }
+  const rest = len - i;
+  if (rest >= 2) {
+    const a = LOOKUP[codes[i]!]!;
+    const b = LOOKUP[codes[i + 1]!]!;
+    out[o++] = (a << 2) | (b >> 4);
+    if (rest === 3) {
+      const c = LOOKUP[codes[i + 2]!]!;
+      out[o++] = ((b & 15) << 4) | (c >> 2);
+    }
   }
   return out.subarray(0, o);
 }
 
+const EQUALS = 61;
+
 export function bytesToBase64(bytes: Uint8Array): string {
-  const parts: string[] = [];
-  let chunk = '';
-  for (let i = 0; i < bytes.length; i += 3) {
+  const out = new Uint8Array(Math.ceil(bytes.length / 3) * 4);
+  let o = 0;
+  let i = 0;
+  for (; i + 3 <= bytes.length; i += 3) {
     const a = bytes[i]!;
-    const b = i + 1 < bytes.length ? bytes[i + 1]! : -1;
-    const c = i + 2 < bytes.length ? bytes[i + 2]! : -1;
-    chunk +=
-      ALPHABET[a >> 2]! +
-      ALPHABET[((a & 3) << 4) | (b >= 0 ? b >> 4 : 0)]! +
-      (b >= 0 ? ALPHABET[((b & 15) << 2) | (c >= 0 ? c >> 6 : 0)]! : '=') +
-      (c >= 0 ? ALPHABET[c & 63]! : '=');
-    // Build in slices: one huge `+=` string is slow on some JS engines.
-    if (chunk.length >= 8192) {
-      parts.push(chunk);
-      chunk = '';
-    }
+    const b = bytes[i + 1]!;
+    const c = bytes[i + 2]!;
+    out[o++] = ENCODE[a >> 2]!;
+    out[o++] = ENCODE[((a & 3) << 4) | (b >> 4)]!;
+    out[o++] = ENCODE[((b & 15) << 2) | (c >> 6)]!;
+    out[o++] = ENCODE[c & 63]!;
   }
-  parts.push(chunk);
+  const rest = bytes.length - i;
+  if (rest > 0) {
+    const a = bytes[i]!;
+    const b = rest === 2 ? bytes[i + 1]! : 0;
+    out[o++] = ENCODE[a >> 2]!;
+    out[o++] = ENCODE[((a & 3) << 4) | (b >> 4)]!;
+    out[o++] = rest === 2 ? ENCODE[(b & 15) << 2]! : EQUALS;
+    out[o++] = EQUALS;
+  }
+  // ASCII codes → string in slices (one giant apply() overflows the stack).
+  const parts: string[] = [];
+  for (let p = 0; p < out.length; p += 8192) {
+    // A typed array is array-like, so apply() takes it directly (no copy).
+    parts.push(String.fromCharCode.apply(null, out.subarray(p, p + 8192) as unknown as number[]));
+  }
   return parts.join('');
 }
 
@@ -121,8 +169,18 @@ export function parseWav(bytes: Uint8Array): WavInfo | null {
   return null;
 }
 
+const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
+
 /** One mono sample per frame, as floats in [-1, 1]. Null for unsupported encodings. */
 function readMono(bytes: Uint8Array, info: WavInfo): Float32Array | null {
+  // Phase 1b fast path: iOS writes mono 32-bit float. On a little-endian
+  // device (every iPhone) the samples can be copied out in one block instead
+  // of read one by one — the same values, a fraction of the time.
+  if (LITTLE_ENDIAN && info.format === 3 && info.bitsPerSample === 32 && info.channels === 1) {
+    const frames = Math.floor(info.dataBytes / 4);
+    const copy = bytes.slice(info.dataOffset, info.dataOffset + frames * 4);
+    return new Float32Array(copy.buffer, copy.byteOffset, frames);
+  }
   const view = new DataView(bytes.buffer, bytes.byteOffset + info.dataOffset, info.dataBytes);
   const width = info.bitsPerSample / 8;
   const frames = Math.floor(info.dataBytes / (width * info.channels));
@@ -172,6 +230,17 @@ export function resample(input: Float32Array, from: number, target: number): Flo
   return out;
 }
 
+/** Float samples → 16-bit integers (the same rounding the WAV has always used). */
+export function toInt16(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i]!;
+    const v = s > 1 ? 1 : s < -1 ? -1 : s;
+    out[i] = v < 0 ? Math.round(v * 32768) : Math.round(v * 32767);
+  }
+  return out;
+}
+
 /** 16-bit PCM mono WAV bytes from float samples. */
 export function encodeWav16(samples: Float32Array, sampleRate: number): Uint8Array {
   const bytes = new Uint8Array(44 + samples.length * 2);
@@ -192,9 +261,13 @@ export function encodeWav16(samples: Float32Array, sampleRate: number): Uint8Arr
   view.setUint16(34, 16, true);
   text(36, 'data');
   view.setUint32(40, samples.length * 2, true);
+  const pcm = LITTLE_ENDIAN ? new Int16Array(bytes.buffer, 44, samples.length) : null;
   for (let i = 0; i < samples.length; i++) {
-    const v = Math.max(-1, Math.min(1, samples[i]!));
-    view.setInt16(44 + i * 2, v < 0 ? Math.round(v * 32768) : Math.round(v * 32767), true);
+    const s = samples[i]!;
+    const v = s > 1 ? 1 : s < -1 ? -1 : s;
+    const q = v < 0 ? Math.round(v * 32768) : Math.round(v * 32767);
+    if (pcm) pcm[i] = q;
+    else view.setInt16(44 + i * 2, q, true);
   }
   return bytes;
 }
@@ -205,7 +278,8 @@ export function encodeWav16(samples: Float32Array, sampleRate: number): Uint8Arr
  * that could be read.
  */
 export function shrinkWavBase64(base64: string): { base64: string; facts: AudioFacts } {
-  const originalBytes = Math.floor((base64.replace(/=+$/, '').length * 3) / 4);
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  const originalBytes = Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
   const unchanged = (info: WavInfo | null): { base64: string; facts: AudioFacts } => ({
     base64,
     facts: {
@@ -245,3 +319,110 @@ export function shrinkWavBase64(base64: string): { base64: string; facts: AudioF
     return unchanged(null);
   }
 }
+
+// ── Phase 2: lossless FLAC upload ──────────────────────────────────────────
+export interface UploadAudio {
+  base64: string;
+  mimeType: string;
+  facts: AudioFacts;
+  /** The 16-bit WAV, to resend if Gemini refuses the FLAC. Null when WAV was sent. */
+  fallback: { base64: string; mimeType: string } | null;
+  /** Milliseconds spent converting to 16-bit, and on FLAC encode + verification. */
+  shrinkMs: number;
+  compressMs: number;
+}
+
+/**
+ * What to upload for one recording. Non-WAV recordings go as recorded. A WAV
+ * becomes 16 kHz mono 16-bit (Phase 1), then lossless FLAC (Phase 2) — but
+ * only when the FLAC decodes back to exactly the same samples AND is
+ * meaningfully smaller; otherwise the 16-bit WAV is sent, as before. Never
+ * throws.
+ */
+export function prepareUpload(base64: string, mimeType: string, now: () => number = Date.now): UploadAudio {
+  const t0 = now();
+  if (!/wav/i.test(mimeType)) {
+    // Not a WAV: sent exactly as recorded, never decoded.
+    const size = Math.max(0, Math.floor((base64.length * 3) / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0));
+    return {
+      base64,
+      mimeType,
+      facts: { durationSec: null, sampleRate: null, channels: null, bitsPerSample: null, originalBytes: size, sentBytes: size, shrunk: false },
+      fallback: null,
+      shrinkMs: 0,
+      compressMs: 0,
+    };
+  }
+  let wavBase64 = base64;
+  let facts: AudioFacts;
+  let pcm: Int16Array | null = null;
+  try {
+    const bytes = base64ToBytes(base64);
+    const info = parseWav(bytes);
+    const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+    const originalBytes = Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+    const unchangedFacts = (i: WavInfo | null): AudioFacts => ({
+      durationSec: i?.durationSec ?? null,
+      sampleRate: i?.sampleRate ?? null,
+      channels: i?.channels ?? null,
+      bitsPerSample: i?.bitsPerSample ?? null,
+      originalBytes,
+      sentBytes: originalBytes,
+      shrunk: false,
+      format: 'wav',
+    });
+    if (!info || info.sampleRate < TARGET_SAMPLE_RATE) {
+      return { base64, mimeType, facts: unchangedFacts(info), fallback: null, shrinkMs: now() - t0, compressMs: 0 };
+    }
+    const already =
+      info.format === 1 && info.bitsPerSample === 16 && info.channels === 1 && info.sampleRate === TARGET_SAMPLE_RATE;
+    if (already) {
+      // Native-endian view of little-endian samples: only on a little-endian
+      // device (every iPhone); otherwise FLAC is simply not attempted.
+      pcm = LITTLE_ENDIAN
+        ? new Int16Array(bytes.slice(info.dataOffset, info.dataOffset + (info.dataBytes & ~1)).buffer)
+        : null;
+      facts = unchangedFacts(info);
+    } else {
+      const mono = readMono(bytes, info);
+      if (!mono || mono.length === 0) {
+        return { base64, mimeType, facts: unchangedFacts(info), fallback: null, shrinkMs: now() - t0, compressMs: 0 };
+      }
+      const resampled = resample(mono, info.sampleRate, TARGET_SAMPLE_RATE);
+      // The same rounding as the WAV, so the FLAC holds exactly the WAV's samples.
+      pcm = toInt16(resampled);
+      const wav = encodeWav16(resampled, TARGET_SAMPLE_RATE);
+      wavBase64 = bytesToBase64(wav);
+      facts = { ...unchangedFacts(info), sentBytes: wav.length, shrunk: true };
+    }
+  } catch {
+    return {
+      base64,
+      mimeType,
+      facts: { durationSec: null, sampleRate: null, channels: null, bitsPerSample: null, originalBytes: 0, sentBytes: 0, shrunk: false, format: 'wav' },
+      fallback: null,
+      shrinkMs: now() - t0,
+      compressMs: 0,
+    };
+  }
+  const t1 = now();
+  const wavResult = { base64: wavBase64, mimeType: 'audio/wav' };
+  try {
+    const flac = pcm ? encodeFlacVerified(pcm, TARGET_SAMPLE_RATE) : null;
+    // Worth it only when clearly smaller: the WAV is the known-good path.
+    if (flac && flac.length < facts.sentBytes * 0.9) {
+      return {
+        base64: bytesToBase64(flac),
+        mimeType: 'audio/flac',
+        facts: { ...facts, wavBytes: facts.sentBytes, sentBytes: flac.length, format: 'flac' },
+        fallback: wavResult,
+        shrinkMs: t1 - t0,
+        compressMs: now() - t1,
+      };
+    }
+  } catch {
+    // fall through to the WAV
+  }
+  return { ...wavResult, facts, fallback: null, shrinkMs: t1 - t0, compressMs: now() - t1 };
+}
+

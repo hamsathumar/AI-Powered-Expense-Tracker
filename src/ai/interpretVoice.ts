@@ -38,7 +38,7 @@ import {
 } from '@/db/queries/people';
 import { insertPendingOperations } from '@/db/queries/pendingOperations';
 import { getCurrencyCode, getGeminiModel } from '@/db/queries/settings';
-import { type AudioFacts, shrinkWavBase64 } from '@/ai/audio';
+import { type AudioFacts, prepareUpload } from '@/ai/audio';
 import { base64Bytes, emptyMeter, type StageTiming, stopwatch, type VoiceTimings } from '@/ai/timing';
 
 /** Default capture format (expo-audio recorder). The speech-recognition
@@ -221,27 +221,49 @@ export async function interpretVoice(
   const [model, recorded, ctx] = await Promise.all([getGeminiModel(), fileToBase64(audioUri), loadContext()]);
   stages.push({ stage: 'prepare', ms: lap() });
 
-  // Phase 1a: send 16 kHz mono — what Gemini uses anyway — instead of the
-  // ~44.1 kHz WAV iOS records. Anything not understood is sent as recorded.
-  let base64 = recorded;
-  let audio: AudioFacts | null = null;
-  if (/wav/i.test(audioMimeType)) {
-    lap = stopwatch();
-    const shrunk = shrinkWavBase64(recorded);
-    base64 = shrunk.base64;
-    audio = shrunk.facts;
-    stages.push({ stage: 'shrink', ms: lap() });
+  // Phase 1: 16 kHz mono 16-bit — what Gemini uses anyway — instead of the
+  // 32-bit WAV iOS records. Phase 2: then lossless FLAC, verified sample for
+  // sample on the phone. Anything not understood is sent as recorded.
+  const upload = prepareUpload(recorded, audioMimeType);
+  const audio: AudioFacts | null = /wav/i.test(audioMimeType) ? upload.facts : null;
+  let base64 = upload.base64;
+  if (audio) {
+    stages.push({ stage: 'shrink', ms: upload.shrinkMs });
+    if (upload.compressMs > 0) stages.push({ stage: 'compress', ms: upload.compressMs });
   }
 
-  const interpretMeter = emptyMeter();
-  const raw = await interpretAudioWithGemini({
-    apiKey,
-    model,
-    audioBase64: base64,
-    audioMimeType,
-    context: ctx.prompt,
-    meter: interpretMeter,
-  });
+  let interpretMeter = emptyMeter();
+  let raw: unknown;
+  try {
+    raw = await interpretAudioWithGemini({
+      apiKey,
+      model,
+      audioBase64: base64,
+      audioMimeType: upload.mimeType,
+      context: ctx.prompt,
+      meter: interpretMeter,
+    });
+  } catch (error) {
+    // Gemini refused the FLAC itself (a 400) → resend the 16-bit WAV once.
+    // Rate limits, bad keys and network errors are NOT retried here.
+    if (!upload.fallback || interpretMeter.status !== 400) throw error;
+    stages.push({ stage: 'interpret', ms: interpretMeter.ms, call: interpretMeter });
+    if (audio) {
+      audio.flacRejected = true;
+      audio.format = 'wav';
+      audio.sentBytes = audio.wavBytes ?? audio.sentBytes;
+    }
+    base64 = upload.fallback.base64;
+    interpretMeter = emptyMeter();
+    raw = await interpretAudioWithGemini({
+      apiKey,
+      model,
+      audioBase64: base64,
+      audioMimeType: upload.fallback.mimeType,
+      context: ctx.prompt,
+      meter: interpretMeter,
+    });
+  }
   stages.push({ stage: 'interpret', ms: interpretMeter.ms, call: interpretMeter });
 
   const now = new Date();
