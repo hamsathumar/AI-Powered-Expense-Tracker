@@ -375,34 +375,65 @@ const FROM_THAT_MONEY =
 
 /**
  * An expense the user paid "from it" / "from the money I borrowed" takes the
- * account of the money that came in earlier in the same utterance (a borrow,
- * a repayment received, or income) — but only when that is ONE resolved
- * account, and only for an expense whose own clause says so (found by its
- * amount). Anything else is left for the user to pick. Applied after every
- * operation is resolved, because it reads a sibling's account.
+ * account of the money that came in earlier in the same utterance — but only
+ * when that is ONE resolved account. Anything else is left for the user to
+ * pick. Applied after every operation is resolved, because it reads a
+ * sibling's account.
+ *
+ * Money in: income, a borrow, a repayment received — and (V1.4, TC-047) the
+ * DESTINATION of a transfer: "withdrew 4000 from BOC. From that amount I lent
+ * Hafsa 1500" means the loan came out of Cash.
+ *
+ * Money out: an expense — and (TC-047) money the user lends or repays.
+ *
+ * Which ones it covers: an operation whose own clause says "from it" (found by
+ * its amount), or — TC-047 — any operation in a sentence that OPENS with the
+ * phrase before its amount ("From that amount I lent Hafsa 1500 and lent
+ * Nuski 500 …"), since the phrase governs the whole sentence. A stated
+ * account is never overridden.
  */
 export function inheritFundingAccount(ops: ResolvedOperation[], transcript: string): ResolvedOperation[] {
   if (!transcript || !FROM_THAT_MONEY.test(transcript)) return ops;
+  const resolvedKey = (r: ResolvedRef | null | undefined) =>
+    r?.status === 'resolved' && r.id ? `${r.id}\u0000${r.reference ?? ''}` : null;
   const funding = new Set(
     ops
-      .filter(
-        (o) =>
-          (o.operation === 'income' ||
-            (o.operation === 'lending' && (o.direction === 'borrow' || o.direction === 'lend_repayment_received'))) &&
-          o.account?.status === 'resolved' &&
-          o.account.id,
-      )
-      .map((o) => `${o.account!.id}\u0000${o.account!.reference ?? ''}`),
+      .map((o) => {
+        if (o.operation === 'income') return resolvedKey(o.account);
+        if (o.operation === 'lending' && (o.direction === 'borrow' || o.direction === 'lend_repayment_received')) {
+          return resolvedKey(o.account);
+        }
+        if (o.operation === 'transfer') return resolvedKey(o.toAccount);
+        return null;
+      })
+      .filter((k): k is string => k !== null),
   );
   if (funding.size !== 1) return ops;
   const [id, reference] = [...funding][0]!.split('\u0000') as [string, string];
   const clauses = transcript.split(/[,;.!?]|\band\b|\bthen\b/i);
+  const sentences = transcript.split(/[.;!?]+/);
+  const spendsMoney = (o: ResolvedOperation) =>
+    o.operation === 'expense' ||
+    (o.operation === 'lending' && (o.direction === 'lend' || o.direction === 'borrow_repayment_made'));
   return ops.map((o) => {
-    if (o.operation !== 'expense' || o.amountMinor === null) return o;
+    if (!spendsMoney(o) || o.amountMinor === null) return o;
     if (o.account && (o.account.status === 'resolved' || o.account.reference)) return o;
-    const digits = String(Math.round(o.amountMinor / 100));
-    const own = clauses.filter((c) => new RegExp(`(^|\\D)${digits}(\\D|$)`).test(c));
-    if (!own.some((c) => FROM_THAT_MONEY.test(c))) return o;
+    const amount = new RegExp(`(^|\\D)${Math.round(o.amountMinor / 100)}(\\D|$)`);
+    const inOwnClause = clauses.some((c) => amount.test(c) && FROM_THAT_MONEY.test(c));
+    const inLedSentence = sentences.some((sentence) => {
+      const phrase = sentence.match(FROM_THAT_MONEY);
+      const figure = sentence.match(amount);
+      return (
+        phrase?.index !== undefined &&
+        figure?.index !== undefined &&
+        phrase.index < figure.index &&
+        // The phrase opens the sentence ("From that amount I …"), so it
+        // governs everything after it — not a "from it" at the tail of
+        // someone else's clause.
+        /^\s*(?:and\s+|then\s+|so\s+)?$/i.test(sentence.slice(0, phrase.index))
+      );
+    });
+    if (!inOwnClause && !inLedSentence) return o;
     return { ...o, account: { reference: reference || null, id, status: 'resolved', options: [] } };
   });
 }

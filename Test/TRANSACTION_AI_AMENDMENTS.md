@@ -7,7 +7,7 @@ Every amendment made to the Transaction AI V1 blueprint (`TRANSACTION_AI_CONSTIT
 | [V1.1](#part-v11) | 2026-08-21 | Test round 2 — TC-021 … TC-027 | A – G |
 | [V1.2](#part-v12) | 2026-08-25 | Pipeline audit (F1–F11), Phases 1–3 | H – U |
 | [V1.3](#part-v13) | 2026-10-07 | Test round 3 — TC-028 … TC-040, Phases A–C | V – AH |
-| [V1.4](#part-v14) | 2026-11-15 | Test round 4 — TC-041 … TC-046 | AI – AO |
+| [V1.4](#part-v14) | 2026-11-15 | Test round 4 — TC-041 … TC-046; addendum TC-047 | AI – AP |
 
 Test evidence for every round: `AI_TEST_CASE_LOG.md`. The audit behind V1.2: `AI_PIPELINE_AUDIT_2026-08-25.md`.
 
@@ -1630,3 +1630,31 @@ Hot reload is enough (no native or schema change). Run the live eval first:
    approving, Nuski's profile shows you owe 160 and Reports shows a 160 Food
    expense; Cash's balance is unchanged.
 
+## 9. Addendum — Amendment AP: "From that amount" after a withdrawal *(TC-047)*
+
+**Observed.** "…withdrawn 4000 rupees from BOC account. From that amount I lent
+Hafsa 1500 and lent Nuski 500 and paid 500 for biriyani using cash." — both
+loans had no account.
+
+**Root cause.** The V1.3 "spent 70 on lunch FROM IT" rule
+(`inheritFundingAccount`) knew three kinds of money coming in (income, a
+borrow, a repayment received) and one kind going out (an expense), and looked
+for the phrase only inside the spend's own clause. Here the money came in by a
+**transfer** (the withdrawal into Cash), went out as **loans**, and the phrase
+opened the sentence, ahead of two clauses.
+
+**Amendment.** `resolve.ts` → `inheritFundingAccount`:
+- money in now also includes a transfer's **destination** account;
+- money out now also includes **lending out** (`lend`) and **repaying**
+  (`borrow_repayment_made`);
+- an operation is covered when its own clause says "from it" (unchanged), or
+  when it sits in a sentence that **opens** with the phrase ("From that amount
+  I …") before its amount.
+
+Unchanged guards: exactly ONE source account or nothing happens; a stated
+account is never overridden; money coming in (a borrow) is never re-pointed;
+a "from it" at the tail of another clause does not reach back to earlier
+operations.
+
+*Tests:* `v14.test.ts` → "TC-047" (the exact device reading + four guard
+cases); corpus EV-34 (Hafsa added to the eval context).

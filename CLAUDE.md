@@ -307,7 +307,9 @@ still include lending done through a private account.
   the model's spelling of the same words (`interpretation/labels.ts`, AL). A
   part of day with no hour gets its usual time (AM — reverses D1's "invent no
   hour"). Review screen always offers "Paid by". Tests:
-  `src/ai/interpretation/v14.test.ts`, corpus EV-29…EV-33.
+  `src/ai/interpretation/v14.test.ts`, corpus EV-29…EV-33. Addendum AP
+  (TC-047): "from that amount" after a withdrawal/transfer funds loans and
+  repayments too (`inheritFundingAccount`), corpus EV-34.
 - **Voice speed — Phase 0, measurement (2026-11-15):** every capture's
   diagnostics now record where the time went (`src/ai/timing.ts`): per-stage
   durations (prepare, interpret, critic, repair, resolve, save), Gemini's own
@@ -325,6 +327,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 622 tests, plus 30 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 627 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

@@ -4,7 +4,7 @@
 **Purpose:** Evidence collection for Transaction AI architecture design
 **How to log a case:** `Test/AI_TESTING_GUIDE.md`
 
-All four real-world testing rounds, in chronological order. The detailed
+All real-world testing rounds, in chronological order. The detailed
 cases are kept exactly as originally recorded — including each case's own
 **Status:** line, which reflects the moment of recording. The index below
 shows where each case stands now.
@@ -15,8 +15,9 @@ shows where each case stands now.
 | 2 | TC-021 … TC-027 | 2026-08-18 … 08-21 | After the V1 rebuild | `TRANSACTION_AI_AMENDMENTS.md` V1.1 (A–G) |
 | 3 | TC-028 … TC-040 | 2026-08-21 … 09-17 | Post-fix verification | `TRANSACTION_AI_AMENDMENTS.md` V1.3 (V–AH) |
 | 4 | TC-041 … TC-046 | 2026-10-29 … 11-02 | Post-V1.3 verification | `TRANSACTION_AI_AMENDMENTS.md` V1.4 (AI–AO) |
+| 5 | TC-047 … | 2026-11-15 … | Voice-speed test runs (cases noticed in the shared reports) | `TRANSACTION_AI_AMENDMENTS.md` V1.4 addendum (AP) |
 
-New cases continue the numbering from TC-047 in a new round section at the
+New cases continue the numbering from TC-048 in a new round section at the
 end. Do not delete or renumber existing cases.
 
 ---
@@ -94,6 +95,7 @@ Fix = the amendment letter(s) in `TRANSACTION_AI_AMENDMENTS.md`.
 | TC-044 | 4 | 2026-10-30 | Other (spoken punctuation), Structured Output, Business Rule Validation | Low | FAIL | Fixed — pending device verification | V1.4 AL, AO |
 | TC-045 | 4 | 2026-11-02 | Time Interpretation | Medium | PARTIAL | Fixed — pending device verification | V1.4 AM |
 | TC-046 | 4 | 2026-11-02 | Transaction Type, Borrowing, Account Resolution, Business Rule Validation | High | FAIL | Fixed — pending device verification | V1.4 AN, AO |
+| TC-047 | 5 | 2026-11-15 | Account Resolution, Lending, Compound Utterance | Medium | PARTIAL | Fixed — pending device verification | V1.4 AP |
 
 **TC-027 is "Mitigated", not "Fixed", deliberately.** True iOS background
 execution is not achievable here — a suspended app runs no JavaScript and Expo
@@ -1458,3 +1460,43 @@ Second run of the same input, with full diagnostics export. Original observation
 - The account requirement may come from the AI's output or from an app-layer rule for expenses. This is Unknown without the diagnostics; it may sit on the AI-testing scope boundary.
 - Architectural note (user, 2026-11-02 — recorded, not a requirement): the user expects that defining how "paid by another person" transactions should work will need a dedicated design discussion.
 - Related: TC-041 (names spoken but person field left empty).
+
+---
+
+# Round 5 — TC-047 …
+
+**Context:** cases noticed in the shared diagnostics reports of the voice-speed
+test runs (Phase 0 timing), 2026-11-15 onward. Not included in the round
+summary table above until the round closes.
+
+## TC-047
+
+**Test Case ID:** TC-047
+**Date Discovered:** 2026-11-15 (diagnostics timestamp 2026-11-15T10:16:02.938Z)
+
+**User Input:**
+"So all the transaction I'm going to say was happened last Friday. So first of all in the morning I spent 250 rupees on pikme and Nuski paid it. And then I withdrawn 4000 rupees from BOC account. From that amount I lent Hafsa 1500 and lent Nuski 500 and paid 500 for biriyani using cash. Then another 400 for bus fare using cash and spent 100 rupees on a milk packet using cash and then other three sorry 530 rupees on bus fare using cash." (voice)
+
+**Context:**
+- Voice input, 8 transactions in one utterance; model gemini-3.5-flash-lite.
+- Evidence: the full shared diagnostics report (timing, result, raw Gemini JSON).
+- Found while measuring speed (68 s, 98 % in the main Gemini call).
+
+**Expected Behaviour:**
+- "From that amount" refers to the 4000 just withdrawn from BOC into Cash, so
+  both loans (Hafsa 1500, Nuski 500) come out of **Cash**.
+
+**Actual Behaviour (observed):**
+- All eight transactions, amounts, types, dates and the self-correction
+  ("three sorry 530") were read correctly; Pikme carried `paidBy: Nuski`.
+- Both loans were left with no account: "Lending to Hafsa (lending, 1500.00) —
+  blocked: No account selected." and the same for Nuski. Gemini gave them no
+  account, and the app's "from it" rule (V1.3) only covered expenses funded by
+  income / a borrow / a repayment — not loans, and not money from a transfer.
+
+**Result:** PARTIAL
+**Category:** Account Resolution; Lending; Compound Utterance
+**Severity:** Medium (nothing saved wrongly — both loans were blocked for the user to pick the account)
+**Failure Type:** Missing required information (account implied by "from that amount" not applied)
+**Reproducibility:** Not Tested
+**Status:** Fixed — pending device verification (V1.4 AP)
