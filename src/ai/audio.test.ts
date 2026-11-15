@@ -25,12 +25,15 @@ function makeWav(opts: {
   tone?: number;
   extensible?: boolean;
   extraChunk?: boolean;
+  /** Size of the extra chunk's body (default 12). */
+  extraSize?: number;
 }): Uint8Array {
   const frames = Math.round(opts.sampleRate * opts.seconds);
   const width = opts.bits / 8;
   const dataBytes = frames * opts.channels * width;
   const fmtSize = opts.extensible ? 40 : 16;
-  const extra = opts.extraChunk ? 8 + 12 : 0;
+  const extraSize = opts.extraSize ?? 12;
+  const extra = opts.extraChunk ? 8 + extraSize : 0;
   const total = 12 + 8 + fmtSize + extra + 8 + dataBytes;
   const bytes = new Uint8Array(total);
   const v = new DataView(bytes.buffer);
@@ -54,8 +57,8 @@ function makeWav(opts: {
   p += 8 + fmtSize;
   if (opts.extraChunk) {
     text(p, 'FLLR');
-    v.setUint32(p + 4, 12, true);
-    p += 20;
+    v.setUint32(p + 4, extraSize, true);
+    p += 8 + extraSize;
   }
   text(p, 'data');
   v.setUint32(p + 4, dataBytes, true);
@@ -145,6 +148,33 @@ describe('shrinkWavBase64', () => {
   });
 });
 
+describe('Phase 1b fast path (16 kHz mono 32-bit float — what the iPhone records)', () => {
+  it('gives exactly the samples the general path would', () => {
+    const wav = makeWav({ sampleRate: 16000, channels: 1, bits: 32, float: true, seconds: 0.5, tone: 440 });
+    const { base64, facts } = shrinkWavBase64(toB64(wav));
+    expect(facts).toMatchObject({ shrunk: true, sampleRate: 16000, bitsPerSample: 32 });
+    const out = base64ToBytes(base64);
+    // Expected: each float sample, read independently, quantised to 16-bit.
+    const info = parseWav(wav)!;
+    const src = new DataView(wav.buffer, info.dataOffset, info.dataBytes);
+    const frames = info.dataBytes / 4;
+    const expected = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) expected[i] = src.getFloat32(i * 4, true);
+    expect([...out]).toEqual([...encodeWav16(expected, 16000)]);
+    expect(out.length).toBe(44 + frames * 2); // exactly half the samples' size
+  });
+
+  it('copes with audio data that does not start on a 4-byte boundary', () => {
+    // A 6-byte extra chunk puts the samples at offset 62 — not a multiple of 4,
+    // which a direct Float32Array view would reject.
+    const wav = makeWav({ sampleRate: 16000, channels: 1, bits: 32, float: true, seconds: 0.1, tone: 300, extraChunk: true, extraSize: 6 });
+    expect(parseWav(wav)!.dataOffset % 4).not.toBe(0);
+    const { base64, facts } = shrinkWavBase64(toB64(wav));
+    expect(facts.shrunk).toBe(true);
+    expect(parseWav(base64ToBytes(base64))!.durationSec).toBeCloseTo(0.1, 3);
+  });
+});
+
 describe('resample / encodeWav16', () => {
   it('keeps the length in time and clips out-of-range samples', () => {
     expect(resample(new Float32Array(44100), 44100, 16000).length).toBe(16000);
@@ -158,7 +188,11 @@ describe('describeAudio (Timing line)', () => {
   it('says what was recorded and what was sent', () => {
     expect(
       describeAudio({ durationSec: 45.2, sampleRate: 44100, channels: 1, bitsPerSample: 16, originalBytes: 3923 * 1024, sentBytes: 1424 * 1024, shrunk: true }),
-    ).toBe('45 s recording, 3923 KB → 1424 KB sent (44.1 kHz mono → 16 kHz mono)');
+    ).toBe('45 s recording, 3923 KB → 1424 KB sent (44.1 kHz mono 16-bit → 16 kHz mono 16-bit)');
+    // The device case: already 16 kHz, but 32-bit — the label must say what changed.
+    expect(
+      describeAudio({ durationSec: 61, sampleRate: 16000, channels: 1, bitsPerSample: 32, originalBytes: 3842 * 1024, sentBytes: 1919 * 1024, shrunk: true }),
+    ).toBe('61 s recording, 3842 KB → 1919 KB sent (16 kHz mono 32-bit → 16 kHz mono 16-bit)');
     expect(
       describeAudio({ durationSec: null, sampleRate: null, channels: null, bitsPerSample: null, originalBytes: 2048, sentBytes: 2048, shrunk: false }),
     ).toBe('recording 2 KB sent as recorded');

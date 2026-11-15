@@ -327,6 +327,14 @@ still include lending done through a private account.
   original on anything unexpected; Timing shows length/format/sizes. Same PR:
   amendment AQ (TC-048) — a part of day said for one transaction is kept
   (prompt rule + `withSpokenPartOfDay` backstop).
+  Measured after 1a: Wi-Fi 28 → 18 s, mobile 54 → 28 s. Correction: the
+  iPhone already records 16 kHz — the saving was 32-bit float → 16-bit.
+- **Voice speed — Phase 1b (2026-11-15):** the shrink step's codec rewritten
+  on typed arrays (base64 both ways, block copy of iOS's mono float32, Int16
+  writes): ~3.5× faster in node, output byte-for-byte identical (checked by
+  hash before/after). Timing label now shows bit depth. Next, on owner request
+  (mostly records on mobile data): Phase 2 = lossless FLAC upload with
+  WAV fallback.
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -334,6 +342,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 640 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 642 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.
