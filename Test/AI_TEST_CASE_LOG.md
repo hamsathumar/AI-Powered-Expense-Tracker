@@ -17,7 +17,7 @@ shows where each case stands now.
 | 4 | TC-041 … TC-046 | 2026-10-29 … 11-02 | Post-V1.3 verification | `TRANSACTION_AI_AMENDMENTS.md` V1.4 (AI–AO) |
 | 5 | TC-047 … | 2026-11-15 … | Voice-speed test runs (cases noticed in the shared reports) | `TRANSACTION_AI_AMENDMENTS.md` V1.4 addendum (AP) |
 
-New cases continue the numbering from TC-048 in a new round section at the
+New cases continue the numbering from TC-049 in a new round section at the
 end. Do not delete or renumber existing cases.
 
 ---
@@ -96,6 +96,7 @@ Fix = the amendment letter(s) in `TRANSACTION_AI_AMENDMENTS.md`.
 | TC-045 | 4 | 2026-11-02 | Time Interpretation | Medium | PARTIAL | Fixed — pending device verification | V1.4 AM |
 | TC-046 | 4 | 2026-11-02 | Transaction Type, Borrowing, Account Resolution, Business Rule Validation | High | FAIL | Fixed — pending device verification | V1.4 AN, AO |
 | TC-047 | 5 | 2026-11-15 | Account Resolution, Lending, Compound Utterance | Medium | PARTIAL | Fixed — pending device verification | V1.4 AP |
+| TC-048 | 5 | 2026-11-15 | Time Interpretation, Compound Utterance | Low | PARTIAL | Fixed — pending device verification | V1.4 AQ |
 
 **TC-027 is "Mitigated", not "Fixed", deliberately.** True iOS background
 execution is not achievable here — a suspended app runs no JavaScript and Expo
@@ -1500,3 +1501,25 @@ summary table above until the round closes.
 **Failure Type:** Missing required information (account implied by "from that amount" not applied)
 **Reproducibility:** Not Tested
 **Status:** Fixed — pending device verification (V1.4 AP)
+
+## TC-048
+
+**Test Case ID:** TC-048
+**Date Discovered:** 2026-11-15 (speed-test script, mobile-data run, diagnostics 2026-11-15T10:38:33.519Z)
+
+**User Input:**
+"All of these were yesterday. In the morning I spent 350 rupees on breakfast using cash, … In the afternoon I bought a phone charger for 2,000 rupees from BOC. …" (voice; the 9-transaction speed-test script)
+
+**Context:**
+- The same script read on Wi-Fi a few minutes earlier gave `"yesterday in the morning"` and `"yesterday in the afternoon"`; the mobile-data run gave `"yesterday"` for both. Same model, same prompt — the model's output varies.
+
+**Expected Behaviour:** Breakfast yesterday 08:00, phone charger yesterday 14:00 (V1.4 AM).
+
+**Actual Behaviour (observed):** both carried only `"yesterday"`, so they would be stamped at the time of speaking.
+
+**Result:** PARTIAL
+**Category:** Time Interpretation; Compound Utterance
+**Severity:** Low (the day is right; only the time of day is lost)
+**Status:** Fixed — pending device verification (V1.4 AQ)
+
+**Also noted in this run (not a case yet):** the phone charger was read as 2,000 in the transcript and the reading; the script says 2,500. Whether 2,000 was actually spoken is unconfirmed.

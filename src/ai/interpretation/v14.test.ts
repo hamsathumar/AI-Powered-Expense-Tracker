@@ -557,3 +557,72 @@ describe('TC-047 — "withdrew 4000 from BOC. From that amount I lent Hafsa 1500
     expect(two.operations[2]!.account?.status).not.toBe('resolved');
   });
 });
+
+// ── Phase 1a speed-test run: a part of day dropped for one transaction ─────
+describe('part of day said for ONE transaction is kept (speed-test mobile run)', () => {
+  const t =
+    'All of these were yesterday. In the morning I spent 350 rupees on breakfast using cash, then I paid 1,200 rupees for groceries from Commercial Bank. In the afternoon I bought a phone charger for 2,000 rupees from BOC. And finally I spent 600 rupees on dinner using cash.';
+  const day = (expression: string | null) => (expression ? { expression, kind: 'relative' } : undefined);
+  const spend = (name: string, value: number, account: string, date: string | null = 'yesterday') => ({
+    operation: 'expense',
+    amount: said(`${value} rupees`, value),
+    account: ref(account),
+    category: ref('Food'),
+    ...(day(date) ? { dateExpression: day(date) } : {}),
+    name,
+  });
+  const boc = (): ResolveContext => ({ ...ctx(), accounts: [...ctx().accounts, { id: 'acc-boc', name: 'BOC', kind: 'bank' }] });
+
+  it('the device reading ("yesterday" on all four) gets its morning and afternoon back', () => {
+    const { operations, issues } = run(
+      {
+        transcript: t,
+        candidates: [
+          spend('Breakfast', 350, 'Cash'),
+          spend('Groceries', 1200, 'Commercial Bank'),
+          spend('Phone Charger', 2000, 'BOC'),
+          spend('Dinner', 600, 'Cash'),
+        ],
+      },
+      boc(),
+    );
+    expect(operations.map((o) => o.dateExpression)).toEqual([
+      'yesterday in the morning',
+      'yesterday',
+      'yesterday in the afternoon',
+      'yesterday',
+    ]);
+    expect(issues.filter((i) => /time of day/.test(i))).toHaveLength(2);
+    // And it resolves to the usual times (V1.4 AM).
+    const at = (e: string) => new Date(resolveDateExpression(e, NOW).iso).getHours();
+    expect(at(operations[0]!.dateExpression!)).toBe(8);
+    expect(at(operations[2]!.dateExpression!)).toBe(14);
+  });
+
+  it('never: over a time the model kept, onto a clause without one, or onto a different day', () => {
+    const kept = run({ transcript: t, candidates: [spend('Breakfast', 350, 'Cash', 'yesterday at 7 am')] }, boc());
+    expect(kept.operations[0]!.dateExpression).toBe('yesterday at 7 am');
+
+    const plain = run({ transcript: t, candidates: [spend('Groceries', 1200, 'Commercial Bank')] }, boc());
+    expect(plain.operations[0]!.dateExpression).toBe('yesterday');
+
+    const otherDay = run(
+      { transcript: 'Spent 300 on dinner last night.', candidates: [spend('Dinner', 300, 'Cash', 'today')] },
+      boc(),
+    );
+    expect(otherDay.operations[0]!.dateExpression).toBe('today');
+  });
+
+  it('"last night" with the day already "yesterday" becomes "last night"; with no day, the phrase alone', () => {
+    const night = run(
+      { transcript: 'Spent 300 on dinner last night.', candidates: [spend('Dinner', 300, 'Cash', 'yesterday')] },
+      boc(),
+    );
+    expect(night.operations[0]!.dateExpression).toBe('last night');
+    const none = run(
+      { transcript: 'In the morning I spent 350 on breakfast.', candidates: [spend('Breakfast', 350, 'Cash', null)] },
+      boc(),
+    );
+    expect(none.operations[0]!.dateExpression).toBe('in the morning');
+  });
+});

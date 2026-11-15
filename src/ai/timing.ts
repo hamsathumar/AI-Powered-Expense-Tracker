@@ -11,6 +11,7 @@
  * Measurement only — nothing here changes what is sent, read or saved.
  * Pure (apart from `Date.now` in the stopwatch), so the wording is unit-tested.
  */
+import type { AudioFacts } from '@/ai/audio';
 
 /** What one Gemini request cost. Filled in by `callGemini` as it goes, so a
  *  call that throws still reports how long it took and why. */
@@ -39,6 +40,8 @@ export const emptyMeter = (): CallMeter => ({
 export type StageName =
   /** Key, model name, reading the recording, loading accounts/people. */
   | 'prepare'
+  /** Converting the recording to 16 kHz mono before upload (Phase 1a). */
+  | 'shrink'
   /** The main audio → JSON call. */
   | 'interpret'
   /** The compound-utterance auditor. */
@@ -67,6 +70,8 @@ export interface VoiceTimings {
   attempt: number;
   /** Size of the recording sent to Gemini. */
   audioBytes: number | null;
+  /** What the recording was and what was sent (Phase 1a). Absent on older records. */
+  audio?: AudioFacts | null;
   /** Why the previous attempt failed, when this is a retry ("rate limit…"). */
   previousError: string | null;
   stages: StageTiming[];
@@ -86,6 +91,7 @@ export function base64Bytes(base64: string): number {
 
 const STAGE_WORDS: Record<StageName, string> = {
   prepare: 'Getting ready (recording, accounts, people)',
+  shrink: 'Shrinking the recording for upload',
   interpret: 'Gemini reading the recording',
   critic: 'Second check (critic)',
   repair: 'Re-read the critic asked for',
@@ -109,6 +115,17 @@ function describeCall(call: CallMeter): string {
   return parts.join(', ');
 }
 
+const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
+
+/** "45 s recording, 3923 KB → 1424 KB sent (44.1 kHz stereo → 16 kHz mono)". */
+export function describeAudio(a: AudioFacts): string {
+  const length = a.durationSec !== null ? `${Math.round(a.durationSec)} s recording, ` : 'recording ';
+  if (!a.shrunk) return `${length}${kb(a.sentBytes)} sent as recorded`;
+  const rate = a.sampleRate !== null ? `${(a.sampleRate / 1000).toFixed(a.sampleRate % 1000 ? 1 : 0)} kHz` : '?';
+  const channels = a.channels === 1 ? 'mono' : a.channels === 2 ? 'stereo' : `${a.channels ?? '?'} ch`;
+  return `${length}${kb(a.originalBytes)} → ${kb(a.sentBytes)} sent (${rate} ${channels} → 16 kHz mono)`;
+}
+
 /** One plain line per stage, slowest marked — shared by the sheet and the report. */
 export function describeTimings(t: VoiceTimings): { summary: string; lines: string[] } {
   const slowest = t.stages.reduce<StageTiming | null>((a, s) => (!a || s.ms > a.ms ? s : a), null);
@@ -123,10 +140,26 @@ export function describeTimings(t: VoiceTimings): { summary: string; lines: stri
   const attempt = t.attempt > 1 ? ` (attempt ${t.attempt} — earlier tries failed)` : '';
   if (t.previousError) lines.push(`Previous attempt failed: ${t.previousError}`);
   const calls = t.stages.filter((s) => s.call).length;
-  const audio = t.audioBytes !== null ? ` · recording ${Math.round(t.audioBytes / 1024)} KB` : '';
+  const audio = t.audio ? ` · ${describeAudio(t.audio)}` : t.audioBytes !== null ? ` · recording ${Math.round(t.audioBytes / 1024)} KB` : '';
   return {
     summary: `Took ${seconds(t.totalMs)}${waited}${attempt} · ${calls} Gemini call${calls === 1 ? '' : 's'}${audio}`,
     lines,
+  };
+}
+
+function parseAudio(raw: unknown): AudioFacts | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const a = raw as Partial<AudioFacts>;
+  if (typeof a.originalBytes !== 'number' || typeof a.sentBytes !== 'number') return null;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    durationSec: n(a.durationSec),
+    sampleRate: n(a.sampleRate),
+    channels: n(a.channels),
+    bitsPerSample: n(a.bitsPerSample),
+    originalBytes: a.originalBytes,
+    sentBytes: a.sentBytes,
+    shrunk: a.shrunk === true,
   };
 }
 
@@ -163,6 +196,7 @@ export function parseTimings(raw: unknown): VoiceTimings | null {
     queuedMs: num(t.queuedMs),
     attempt: num(t.attempt) ?? 1,
     audioBytes: num(t.audioBytes),
+    audio: parseAudio(t.audio),
     previousError: typeof t.previousError === 'string' ? t.previousError.slice(0, 300) : null,
     stages,
   };

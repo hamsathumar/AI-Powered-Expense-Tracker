@@ -12,6 +12,7 @@
  */
 import { formatAmount } from '@/domain/money';
 
+import { resolveDateExpression } from './dates';
 import { isSuspiciousEntityReference } from './injection';
 import { deriveName } from './naming';
 import type {
@@ -850,6 +851,50 @@ export function resolveSpecialized(op: SpecializedOperation, ctx: ResolveContext
   };
 }
 
+// ── Phase 1a (speed-test run): "In the morning I spent 350 on breakfast" ──
+/** A part of day said for one transaction. */
+const PART_OF_DAY_PHRASE =
+  /\b(?:in\s+the\s+(?:morning|afternoon|evening)|this\s+(?:morning|afternoon|evening)|at\s+(?:night|noon|midnight)|tonight|last\s+night)\b/i;
+/** The date expression already carries a time of day or a clock time. */
+const HAS_TIME_OF_DAY =
+  /\b(?:morning|afternoon|evening|night|tonight|noon|midday|midnight)\b|\d{1,2}\s*(?:[:.]\d{2}|a\.?m\b|p\.?m\b|o'?\s?clock)/i;
+
+/**
+ * The model sometimes keeps the shared day ("All of these were yesterday")
+ * but drops a part of day said for ONE transaction ("In the morning I spent
+ * 350 on breakfast") — the same sentence kept it on Wi-Fi and lost it on
+ * mobile data. When the operation's own clause (found by its amount) has a
+ * part-of-day phrase and its date expression has no time, the phrase is added
+ * back — only when the result still resolves, to the SAME day, without a
+ * morning-or-evening question. Ordinary operations only.
+ */
+function withSpokenPartOfDay(op: ResolvedOperation, clauses: string[], now: Date): ResolvedOperation {
+  if (op.specialized || op.amountMinor === null) return op;
+  if (op.dateExpression && HAS_TIME_OF_DAY.test(op.dateExpression)) return op;
+  const amount = new RegExp(`(^|\\D)${Math.round(op.amountMinor / 100)}(\\D|$)`);
+  const phrase = clauses
+    .filter((c) => amount.test(c.replace(/(\d),(\d{3})/g, '$1$2')))
+    .map((c) => c.match(PART_OF_DAY_PHRASE)?.[0])
+    .find((p): p is string => !!p);
+  if (!phrase) return op;
+  const part = phrase.trim().toLowerCase();
+  const day = op.dateExpression ? resolveDateExpression(op.dateExpression, now) : null;
+  if (day && !day.resolved) return op;
+  const dayOf = (iso: string) => iso.slice(0, 10);
+  const options = op.dateExpression ? [`${op.dateExpression} ${part}`, part] : [part];
+  for (const next of options) {
+    const r = resolveDateExpression(next, now);
+    if (!r.resolved || r.timeNeedsConfirm) continue;
+    const local = (iso: string) => {
+      const d = new Date(iso);
+      return dayOf(new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString());
+    };
+    if (day && local(r.iso) !== local(day.iso)) continue;
+    return { ...op, dateExpression: next };
+  }
+  return op;
+}
+
 /**
  * Resolve a whole validated interpretation — the ONE path both the app
  * (`interpretVoice`) and the eval harness (`score.ts`) use, so a replay
@@ -906,6 +951,8 @@ export function resolveInterpretation(
     return true;
   });
 
+  const clauses = transcript.split(/[,;.!?](?!\d{3})|\band\b|\bthen\b/i);
+  const now = new Date();
   const operations = inheritFundingAccount(
     [
       ...candidates.map((c) => resolveCandidate(c, ctx, scope)),
@@ -913,6 +960,12 @@ export function resolveInterpretation(
       ...uniqueIntents,
     ],
     transcript,
-  ).map((o) => ({ ...o, transcript }));
+  ).map((o) => {
+    const timed = withSpokenPartOfDay(o, clauses, now);
+    if (timed.dateExpression !== o.dateExpression) {
+      issues.push(`time of day for "${o.name}" taken from what the user said ("${timed.dateExpression}")`);
+    }
+    return { ...timed, transcript };
+  });
   return { operations, issues };
 }
