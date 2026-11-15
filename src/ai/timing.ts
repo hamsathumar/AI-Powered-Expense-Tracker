@@ -42,6 +42,8 @@ export type StageName =
   | 'prepare'
   /** Converting the recording to 16 kHz mono before upload (Phase 1a). */
   | 'shrink'
+  /** Lossless FLAC encode + sample-for-sample verification (Phase 2). */
+  | 'compress'
   /** The main audio → JSON call. */
   | 'interpret'
   /** The compound-utterance auditor. */
@@ -92,6 +94,7 @@ export function base64Bytes(base64: string): number {
 const STAGE_WORDS: Record<StageName, string> = {
   prepare: 'Getting ready (recording, accounts, people)',
   shrink: 'Shrinking the recording for upload',
+  compress: 'Compressing it (lossless FLAC, checked)',
   interpret: 'Gemini reading the recording',
   critic: 'Second check (critic)',
   repair: 'Re-read the critic asked for',
@@ -126,7 +129,12 @@ export function describeAudio(a: AudioFacts): string {
   // The bit depth is shown too: a 16 kHz recording at 32-bit read as
   // "16 kHz mono → 16 kHz mono", which hid what actually changed.
   const bits = a.bitsPerSample !== null ? ` ${a.bitsPerSample}-bit` : '';
-  return `${length}${kb(a.originalBytes)} → ${kb(a.sentBytes)} sent (${rate} ${channels}${bits} → 16 kHz mono 16-bit)`;
+  const format = `(${rate} ${channels}${bits} → 16 kHz mono 16-bit)`;
+  if (a.format === 'flac' && a.wavBytes !== undefined) {
+    return `${length}${kb(a.originalBytes)} → ${kb(a.wavBytes)} WAV → ${kb(a.sentBytes)} sent as lossless FLAC ${format}`;
+  }
+  const rejected = a.flacRejected ? ' — Gemini refused the FLAC, so the WAV was sent' : '';
+  return `${length}${kb(a.originalBytes)} → ${kb(a.sentBytes)} sent ${format}${rejected}`;
 }
 
 /** One plain line per stage, slowest marked — shared by the sheet and the report. */
@@ -163,6 +171,9 @@ function parseAudio(raw: unknown): AudioFacts | null {
     originalBytes: a.originalBytes,
     sentBytes: a.sentBytes,
     shrunk: a.shrunk === true,
+    ...(a.format === 'flac' || a.format === 'wav' ? { format: a.format } : {}),
+    ...(typeof a.wavBytes === 'number' ? { wavBytes: a.wavBytes } : {}),
+    ...(a.flacRejected === true ? { flacRejected: true } : {}),
   };
 }
 

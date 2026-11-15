@@ -17,6 +17,8 @@
  * plain node.
  */
 
+import { encodeFlacVerified } from '@/ai/flac';
+
 export const TARGET_SAMPLE_RATE = 16_000;
 
 export interface WavInfo {
@@ -41,6 +43,12 @@ export interface AudioFacts {
   sentBytes: number;
   /** True when the recording was converted; false when sent as captured. */
   shrunk: boolean;
+  /** Phase 2: the container actually sent. Absent on older records (= WAV). */
+  format?: 'wav' | 'flac';
+  /** Phase 2: size of the 16-bit WAV, when FLAC was sent instead of it. */
+  wavBytes?: number;
+  /** Phase 2: Gemini refused the FLAC, so the WAV was sent after all. */
+  flacRejected?: boolean;
 }
 
 // ── base64 ───────────────────────────────────────────────────────────────
@@ -222,6 +230,17 @@ export function resample(input: Float32Array, from: number, target: number): Flo
   return out;
 }
 
+/** Float samples → 16-bit integers (the same rounding the WAV has always used). */
+export function toInt16(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i]!;
+    const v = s > 1 ? 1 : s < -1 ? -1 : s;
+    out[i] = v < 0 ? Math.round(v * 32768) : Math.round(v * 32767);
+  }
+  return out;
+}
+
 /** 16-bit PCM mono WAV bytes from float samples. */
 export function encodeWav16(samples: Float32Array, sampleRate: number): Uint8Array {
   const bytes = new Uint8Array(44 + samples.length * 2);
@@ -300,3 +319,110 @@ export function shrinkWavBase64(base64: string): { base64: string; facts: AudioF
     return unchanged(null);
   }
 }
+
+// ── Phase 2: lossless FLAC upload ──────────────────────────────────────────
+export interface UploadAudio {
+  base64: string;
+  mimeType: string;
+  facts: AudioFacts;
+  /** The 16-bit WAV, to resend if Gemini refuses the FLAC. Null when WAV was sent. */
+  fallback: { base64: string; mimeType: string } | null;
+  /** Milliseconds spent converting to 16-bit, and on FLAC encode + verification. */
+  shrinkMs: number;
+  compressMs: number;
+}
+
+/**
+ * What to upload for one recording. Non-WAV recordings go as recorded. A WAV
+ * becomes 16 kHz mono 16-bit (Phase 1), then lossless FLAC (Phase 2) — but
+ * only when the FLAC decodes back to exactly the same samples AND is
+ * meaningfully smaller; otherwise the 16-bit WAV is sent, as before. Never
+ * throws.
+ */
+export function prepareUpload(base64: string, mimeType: string, now: () => number = Date.now): UploadAudio {
+  const t0 = now();
+  if (!/wav/i.test(mimeType)) {
+    // Not a WAV: sent exactly as recorded, never decoded.
+    const size = Math.max(0, Math.floor((base64.length * 3) / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0));
+    return {
+      base64,
+      mimeType,
+      facts: { durationSec: null, sampleRate: null, channels: null, bitsPerSample: null, originalBytes: size, sentBytes: size, shrunk: false },
+      fallback: null,
+      shrinkMs: 0,
+      compressMs: 0,
+    };
+  }
+  let wavBase64 = base64;
+  let facts: AudioFacts;
+  let pcm: Int16Array | null = null;
+  try {
+    const bytes = base64ToBytes(base64);
+    const info = parseWav(bytes);
+    const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+    const originalBytes = Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+    const unchangedFacts = (i: WavInfo | null): AudioFacts => ({
+      durationSec: i?.durationSec ?? null,
+      sampleRate: i?.sampleRate ?? null,
+      channels: i?.channels ?? null,
+      bitsPerSample: i?.bitsPerSample ?? null,
+      originalBytes,
+      sentBytes: originalBytes,
+      shrunk: false,
+      format: 'wav',
+    });
+    if (!info || info.sampleRate < TARGET_SAMPLE_RATE) {
+      return { base64, mimeType, facts: unchangedFacts(info), fallback: null, shrinkMs: now() - t0, compressMs: 0 };
+    }
+    const already =
+      info.format === 1 && info.bitsPerSample === 16 && info.channels === 1 && info.sampleRate === TARGET_SAMPLE_RATE;
+    if (already) {
+      // Native-endian view of little-endian samples: only on a little-endian
+      // device (every iPhone); otherwise FLAC is simply not attempted.
+      pcm = LITTLE_ENDIAN
+        ? new Int16Array(bytes.slice(info.dataOffset, info.dataOffset + (info.dataBytes & ~1)).buffer)
+        : null;
+      facts = unchangedFacts(info);
+    } else {
+      const mono = readMono(bytes, info);
+      if (!mono || mono.length === 0) {
+        return { base64, mimeType, facts: unchangedFacts(info), fallback: null, shrinkMs: now() - t0, compressMs: 0 };
+      }
+      const resampled = resample(mono, info.sampleRate, TARGET_SAMPLE_RATE);
+      // The same rounding as the WAV, so the FLAC holds exactly the WAV's samples.
+      pcm = toInt16(resampled);
+      const wav = encodeWav16(resampled, TARGET_SAMPLE_RATE);
+      wavBase64 = bytesToBase64(wav);
+      facts = { ...unchangedFacts(info), sentBytes: wav.length, shrunk: true };
+    }
+  } catch {
+    return {
+      base64,
+      mimeType,
+      facts: { durationSec: null, sampleRate: null, channels: null, bitsPerSample: null, originalBytes: 0, sentBytes: 0, shrunk: false, format: 'wav' },
+      fallback: null,
+      shrinkMs: now() - t0,
+      compressMs: 0,
+    };
+  }
+  const t1 = now();
+  const wavResult = { base64: wavBase64, mimeType: 'audio/wav' };
+  try {
+    const flac = pcm ? encodeFlacVerified(pcm, TARGET_SAMPLE_RATE) : null;
+    // Worth it only when clearly smaller: the WAV is the known-good path.
+    if (flac && flac.length < facts.sentBytes * 0.9) {
+      return {
+        base64: bytesToBase64(flac),
+        mimeType: 'audio/flac',
+        facts: { ...facts, wavBytes: facts.sentBytes, sentBytes: flac.length, format: 'flac' },
+        fallback: wavResult,
+        shrinkMs: t1 - t0,
+        compressMs: now() - t1,
+      };
+    }
+  } catch {
+    // fall through to the WAV
+  }
+  return { ...wavResult, facts, fallback: null, shrinkMs: t1 - t0, compressMs: now() - t1 };
+}
+

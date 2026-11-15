@@ -1689,3 +1689,16 @@ about 2.7× smaller; anything it does not understand is sent as recorded. The
 Timing section shows the recording's length, format and both sizes. Reading
 accuracy is expected to be unchanged; confirm with the live eval and the
 speed-test script.
+
+## 12. Note — voice speed, Phases 1b and 2 (not an interpretation change)
+
+Measured after Phase 1a (same 9-transaction script): Wi-Fi 28 → 18 s, mobile
+data 54 → 28 s. Correction to §11: the iPhone already records **16 kHz** mono —
+the saving came from **32-bit float → 16-bit**, not from resampling.
+
+- **1b:** the shrink step's codec rewritten on typed arrays (~3.5× faster,
+  byte-identical output).
+- **2:** lossless FLAC upload (`src/ai/flac.ts`), used only when it round-trips
+  sample-for-sample on the phone and is ≥10 % smaller; a Gemini 400 on the
+  FLAC resends the 16-bit WAV once. Gemini lists `audio/flac` as a supported
+  audio type. The audio Gemini hears is unchanged in every case.

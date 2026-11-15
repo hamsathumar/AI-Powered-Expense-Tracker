@@ -332,9 +332,16 @@ still include lending done through a private account.
 - **Voice speed — Phase 1b (2026-11-15):** the shrink step's codec rewritten
   on typed arrays (base64 both ways, block copy of iOS's mono float32, Int16
   writes): ~3.5× faster in node, output byte-for-byte identical (checked by
-  hash before/after). Timing label now shows bit depth. Next, on owner request
-  (mostly records on mobile data): Phase 2 = lossless FLAC upload with
-  WAV fallback.
+  hash before/after). Timing label now shows bit depth.
+- **Voice speed — Phase 2, lossless FLAC upload (2026-11-15):** owner records
+  mostly on mobile data. `src/ai/flac.ts` (pure): minimal valid FLAC — mono
+  16-bit, 4096-sample blocks, CONSTANT / FIXED (orders 0–4, partitioned Rice)
+  / VERBATIM — plus a matching decoder. `audio.prepareUpload` sends FLAC only
+  when it decodes back to EXACTLY the same samples (checked on the phone,
+  every capture) and is ≥10 % smaller; else the 16-bit WAV. `interpretVoice`
+  resends the WAV once if Gemini answers the FLAC with HTTP 400. Timing gains
+  a "compress" stage and the WAV/FLAC sizes. `flac.test.ts` cross-checks
+  against ffmpeg when installed (skips otherwise).
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -342,6 +349,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 642 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 660 tests, plus 31 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.
