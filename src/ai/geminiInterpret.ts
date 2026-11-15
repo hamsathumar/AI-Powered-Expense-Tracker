@@ -20,6 +20,7 @@
 import { fileToBase64 } from '@/ai/gemini';
 import { buildInterpretationSystemInstruction, type InterpretPromptContext } from '@/ai/interpretPrompt';
 import { INTERPRETATION_RESPONSE_SCHEMA } from '@/ai/interpretSchema';
+import { type CallMeter, stopwatch } from '@/ai/timing';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -29,11 +30,20 @@ export interface InterpretRequest {
   audioBase64: string;
   audioMimeType: string;
   context: InterpretPromptContext;
+  /** Filled with this call's duration and token counts (Phase 0 timing). */
+  meter?: CallMeter;
 }
 
 interface GeminiResponse {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
   promptFeedback?: { blockReason?: string };
+  /** Gemini's own token accounting — measurement only. */
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    totalTokenCount?: number;
+  };
 }
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
@@ -45,6 +55,8 @@ export interface GeminiCall {
   parts: Part[];
   /** Declared output shape. Omitted on the retry described in `callGemini`. */
   responseSchema?: unknown;
+  /** When given, filled in as the call goes — even when it throws. */
+  meter?: CallMeter;
 }
 
 function stripFences(text: string): string {
@@ -113,13 +125,26 @@ async function post(call: GeminiCall): Promise<Response> {
  * unaffected either way, since it never trusted the shape to begin with.
  */
 export async function callGemini(call: GeminiCall): Promise<unknown> {
+  const elapsed = stopwatch();
+  const meter = call.meter;
+  try {
+    return await callGeminiOnce(call, meter);
+  } finally {
+    if (meter) meter.ms = elapsed();
+  }
+}
+
+async function callGeminiOnce(call: GeminiCall, meter: CallMeter | undefined): Promise<unknown> {
   let response = await post(call);
+  if (meter) meter.status = response.status;
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
 
     if (call.responseSchema && looksLikeSchemaRejection(response.status, detail)) {
+      if (meter) meter.schemaRetry = true;
       response = await post({ ...call, responseSchema: undefined });
+      if (meter) meter.status = response.status;
     } else if (response.status === 400 && /API key/i.test(detail)) {
       throw new Error('Gemini rejected the API key. Check it in Settings.');
     } else if (response.status === 429) {
@@ -140,6 +165,13 @@ export async function callGemini(call: GeminiCall): Promise<unknown> {
   }
 
   const data = (await response.json()) as GeminiResponse;
+  if (meter && data.usageMetadata) {
+    const u = data.usageMetadata;
+    meter.promptTokens = u.promptTokenCount ?? null;
+    meter.outputTokens = u.candidatesTokenCount ?? null;
+    meter.thinkingTokens = u.thoughtsTokenCount ?? null;
+    meter.totalTokens = u.totalTokenCount ?? null;
+  }
   const blocked = data.promptFeedback?.blockReason;
   if (blocked) throw new Error(`Gemini blocked the request (${blocked}).`);
 
@@ -161,6 +193,7 @@ export async function interpretAudioWithGemini(req: InterpretRequest): Promise<u
     systemInstruction: buildInterpretationSystemInstruction(req.context),
     parts: [{ inline_data: { mime_type: req.audioMimeType, data: req.audioBase64 } }],
     responseSchema: INTERPRETATION_RESPONSE_SCHEMA,
+    meter: req.meter,
   });
 }
 
@@ -175,6 +208,7 @@ export interface InterpretTextRequest {
    * reading appears to have missed; it never asserts a value.
    */
   correctionNote?: string;
+  meter?: CallMeter;
 }
 
 /**
@@ -192,6 +226,7 @@ export async function interpretTextWithGemini(req: InterpretTextRequest): Promis
     systemInstruction: system,
     parts: [{ text: req.transcript }],
     responseSchema: INTERPRETATION_RESPONSE_SCHEMA,
+    meter: req.meter,
   });
 }
 

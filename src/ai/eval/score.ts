@@ -19,13 +19,7 @@
  * whether the gate would let them through.
  */
 import { evaluateApproval } from '@/ai/interpretation/gate';
-import {
-  inheritFundingAccount,
-  resolveCandidate,
-  resolveSpecialized,
-  resolveUnqualified,
-  type ResolveContext,
-} from '@/ai/interpretation/resolve';
+import { resolveInterpretation, type ResolveContext } from '@/ai/interpretation/resolve';
 import type {
   ConflictKind,
   LendingDirection,
@@ -94,19 +88,9 @@ function describe(op: ResolvedOperation): string {
 /** Run one model output through the pipeline exactly as the app would. */
 export function pipelineOperations(modelOutput: unknown, ctx: ResolveContext, now: Date): ResolvedOperation[] {
   const validated = validateInterpretation(modelOutput, { now });
-  // The same "what the user said" scope interpretVoice passes (V1.3), so a
-  // replay reaches exactly the end state the app would.
-  const count =
-    validated.candidates.length + validated.specializedOperations.length + validated.unqualifiedIntents.length;
-  const scope = { transcript: validated.transcript, soleOperation: count === 1 };
-  return inheritFundingAccount(
-    [
-      ...validated.candidates.map((c) => resolveCandidate(c, ctx, scope)),
-      ...validated.specializedOperations.map((s) => resolveSpecialized(s, ctx)),
-      ...validated.unqualifiedIntents.map((u) => resolveUnqualified(u, ctx, scope)),
-    ],
-    validated.transcript,
-  );
+  // The same shared resolve path interpretVoice uses (V1.4), so a replay
+  // reaches exactly the end state the app would.
+  return resolveInterpretation(validated, ctx).operations;
 }
 
 function matches(op: ResolvedOperation, want: ExpectedOperation): boolean {

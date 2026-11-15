@@ -16,19 +16,14 @@ import {
   buildCorrectionNote,
   chooseInterpretation,
   critiqueHasFindings,
+  countMoneyMentions,
   critiqueInterpretation,
   shouldCritique,
 } from '@/ai/critic';
 import { fileToBase64, interpretAudioWithGemini, interpretTextWithGemini } from '@/ai/geminiInterpret';
 import type { InterpretPromptContext } from '@/ai/interpretPrompt';
 import { validateInterpretation } from '@/ai/interpretation/validate';
-import {
-  inheritFundingAccount,
-  resolveCandidate,
-  resolveSpecialized,
-  resolveUnqualified,
-  type ResolveContext,
-} from '@/ai/interpretation/resolve';
+import { resolveInterpretation, type ResolveContext } from '@/ai/interpretation/resolve';
 import type {
   ResolvedOperation,
   UnqualifiedIntent,
@@ -43,6 +38,7 @@ import {
 } from '@/db/queries/people';
 import { insertPendingOperations } from '@/db/queries/pendingOperations';
 import { getCurrencyCode, getGeminiModel } from '@/db/queries/settings';
+import { base64Bytes, emptyMeter, type StageTiming, stopwatch, type VoiceTimings } from '@/ai/timing';
 
 /** Default capture format (expo-audio recorder). The speech-recognition
  *  capture (pipeline B) persists WAV, so the screen passes 'audio/wav'. The
@@ -83,7 +79,7 @@ async function loadContext(): Promise<{ resolve: ResolveContext; prompt: Interpr
   const lite = <T extends { id: string; name: string }>(xs: T[]) => xs.map((x) => ({ id: x.id, name: x.name }));
   return {
     resolve: {
-      accounts: accounts.map((a) => ({ id: a.id, name: a.name, kind: a.type })),
+      accounts: accounts.map((a) => ({ id: a.id, name: a.name, kind: a.type, isPrivate: a.isPrivate })),
       expenseCategories: lite(expenseCategories),
       incomeCategories: lite(incomeCategories),
       people: lite(people),
@@ -109,6 +105,8 @@ interface AuditInput {
   raw: unknown;
   validated: ValidatedInterpretation;
   now: Date;
+  /** Critic / repair timings are appended here (Phase 0). */
+  stages: StageTiming[];
 }
 
 interface AuditResult {
@@ -134,21 +132,26 @@ async function auditCompoundUtterance(input: AuditInput): Promise<AuditResult> {
   const { validated, now } = input;
   const transcript = validated.transcript;
   if (!shouldCritique(transcript, validated)) {
-    return { validated, critic: 'not_needed', missing: [], duplicated: [] };
+    const critic: CriticOutcome = countMoneyMentions(transcript) === 0 ? 'no_figures' : 'not_needed';
+    return { validated, critic, missing: [], duplicated: [] };
   }
 
+  const criticMeter = emptyMeter();
   const critique = await critiqueInterpretation({
     apiKey: input.apiKey,
     model: input.model,
     transcript,
     interpretation: input.raw,
+    meter: criticMeter,
   });
+  input.stages.push({ stage: 'critic', ms: criticMeter.ms, call: criticMeter });
   const missing = critique.missing.map((c) => `${c.amountExpression} — “${c.sourceText}”`);
   const duplicated = critique.duplicated.map((c) => `${c.amountExpression} — “${c.sourceText}”`);
   if (!critiqueHasFindings(critique)) return { validated, critic: 'no_findings', missing, duplicated };
 
   let repairRaw: unknown;
   let repaired: ValidatedInterpretation;
+  const repairMeter = emptyMeter();
   try {
     repairRaw = await interpretTextWithGemini({
       apiKey: input.apiKey,
@@ -156,12 +159,15 @@ async function auditCompoundUtterance(input: AuditInput): Promise<AuditResult> {
       transcript,
       context: input.context,
       correctionNote: buildCorrectionNote(critique),
+      meter: repairMeter,
     });
     repaired = validateInterpretation(repairRaw, { now });
   } catch {
     // a failed repair must never cost the user the original
+    input.stages.push({ stage: 'repair', ms: repairMeter.ms, call: repairMeter });
     return { validated, critic: 'repair_failed', missing, duplicated };
   }
+  input.stages.push({ stage: 'repair', ms: repairMeter.ms, call: repairMeter });
 
   if (chooseInterpretation(validated, repaired, critique) === 'original') {
     return {
@@ -198,62 +204,74 @@ export async function interpretVoice(
   audioMimeType: string = DEFAULT_AUDIO_MIME,
   /** The durable job this parse belongs to (Phase C diagnostics link). */
   voiceJobId?: string,
+  /** When the recording was queued and which attempt this is (Phase 0 timing). */
+  job?: { queuedAt?: string; attempt?: number; previousError?: string | null },
 ): Promise<InterpretResult> {
+  // Phase 0: every stage is timed; nothing about the work changes.
+  const startedAt = Date.now();
+  const total = stopwatch();
+  const stages: StageTiming[] = [];
+  const queuedAtMs = job?.queuedAt ? Date.parse(job.queuedAt) : NaN;
+
+  let lap = stopwatch();
   const apiKey = await getGeminiApiKey();
   if (!apiKey) throw new Error('Add your Gemini API key in Settings first.');
 
   const [model, base64, ctx] = await Promise.all([getGeminiModel(), fileToBase64(audioUri), loadContext()]);
+  stages.push({ stage: 'prepare', ms: lap() });
 
+  const interpretMeter = emptyMeter();
   const raw = await interpretAudioWithGemini({
     apiKey,
     model,
     audioBase64: base64,
     audioMimeType,
     context: ctx.prompt,
+    meter: interpretMeter,
   });
+  stages.push({ stage: 'interpret', ms: interpretMeter.ms, call: interpretMeter });
 
   const now = new Date();
+  lap = stopwatch();
+  const firstReading = validateInterpretation(raw, { now });
+  let resolveMs = lap();
   const audit = await auditCompoundUtterance({
     apiKey,
     model,
     context: ctx.prompt,
     raw,
-    validated: validateInterpretation(raw, { now }),
+    validated: firstReading,
     now,
+    stages,
   });
   const { validated } = audit;
+  lap = stopwatch();
 
   // Resolve every operation against the CURRENT entities (app-owned).
   // Unqualified intents are queued too (audit F3): they arrive with a null
   // amount and cannot pass the gate, but the user can complete them instead of
-  // losing what they said.
-  // What the user said, so the resolver can recover an account the model left
-  // out — scoped to each operation's own clause (V1.3, TC-035).
-  const opCount =
-    validated.candidates.length + validated.specializedOperations.length + validated.unqualifiedIntents.length;
-  const scope = { transcript: validated.transcript, soleOperation: opCount === 1 };
-  const ops: ResolvedOperation[] = [
-    ...validated.candidates.map((c) => ({
-      ...resolveCandidate(c, ctx.resolve, scope),
-      transcript: validated.transcript,
-    })),
-    ...validated.specializedOperations.map((s) => ({
-      ...resolveSpecialized(s, ctx.resolve),
-      transcript: validated.transcript,
-    })),
-    ...validated.unqualifiedIntents.map((u) => ({
-      ...resolveUnqualified(u, ctx.resolve, scope),
-      transcript: validated.transcript,
-    })),
-  ];
-
-  // "…and spent 70 on lunch from it" — the spend takes the account of the
-  // money that came in earlier in the same sentence (V1.3, device round).
-  const finalOps = inheritFundingAccount(ops, validated.transcript);
+  // losing what they said. One shared path with the eval harness (V1.4).
+  const resolved = resolveInterpretation(validated, ctx.resolve);
+  const finalOps: ResolvedOperation[] = resolved.operations;
   // Phase C: tag each operation with the capture that produced it, so the
   // review screen can open this capture's diagnostics.
   const tagged = voiceJobId ? finalOps.map((o) => ({ ...o, voiceJobId })) : finalOps;
+  const blockers = tagged.map((op) => ({ op, blockers: evaluateApproval(op).blockers }));
+  resolveMs += lap();
+  stages.push({ stage: 'resolve', ms: resolveMs });
+
+  lap = stopwatch();
   const pendingIds = tagged.length > 0 ? await insertPendingOperations(tagged) : [];
+  stages.push({ stage: 'save', ms: lap() });
+
+  const timings: VoiceTimings = {
+    totalMs: total(),
+    queuedMs: Number.isNaN(queuedAtMs) ? null : Math.max(0, startedAt - queuedAtMs),
+    attempt: job?.attempt ?? 1,
+    audioBytes: base64Bytes(base64),
+    previousError: job?.previousError ?? null,
+    stages,
+  };
 
   const diagnostics = buildDiagnostics({
     model,
@@ -261,10 +279,11 @@ export async function interpretVoice(
     critic: audit.critic,
     criticMissing: audit.missing,
     criticDuplicated: audit.duplicated,
-    validationIssues: validated.issues,
+    validationIssues: [...validated.issues, ...resolved.issues],
     rawResponse: raw,
     repairedResponse: audit.repairRaw,
-    operations: tagged.map((op) => ({ op, blockers: evaluateApproval(op).blockers })),
+    operations: blockers,
+    timings,
     now,
   });
 

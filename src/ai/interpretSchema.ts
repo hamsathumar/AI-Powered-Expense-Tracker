@@ -147,6 +147,10 @@ const candidate = {
     'direction',
     'dateExpression',
     'name',
+    // V1.4: these two were declared but missing from the ordering, so a
+    // schema-constrained reply put them last or not at all (TC-046).
+    'note',
+    'paidBy',
     'evidence',
     'conflicts',
   ],
@@ -233,7 +237,10 @@ const unqualified = {
     account: entityRef,
     toAccount: entityRef,
     category: entityRef,
-    person: entityRef,
+    person: {
+      ...entityRef,
+      description: 'Lending: the person who repaid / was repaid. One intent PER person — never merge several people.',
+    },
     dateExpression,
     name: { type: 'STRING' },
     note: { type: 'STRING', nullable: true },
@@ -251,6 +258,7 @@ const unqualified = {
     'person',
     'dateExpression',
     'name',
+    'note',
     'evidence',
     'rejectionReason',
   ],

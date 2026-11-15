@@ -27,6 +27,7 @@
  */
 import { callGemini } from '@/ai/geminiInterpret';
 import { CRITIQUE_RESPONSE_SCHEMA } from '@/ai/interpretSchema';
+import type { CallMeter } from '@/ai/timing';
 import type { ValidatedInterpretation } from '@/ai/interpretation/types';
 import { userNote } from '@/ai/interpretation/validate';
 
@@ -209,6 +210,8 @@ export interface CritiqueRequest {
   model: string;
   transcript: string;
   interpretation: unknown;
+  /** Filled with this call's duration and tokens (Phase 0 timing). */
+  meter?: CallMeter;
 }
 
 /**
@@ -234,6 +237,7 @@ export async function critiqueInterpretation(req: CritiqueRequest): Promise<Crit
         },
       ],
       responseSchema: CRITIQUE_RESPONSE_SCHEMA,
+      meter: req.meter,
     });
     return verifyCritique(raw, req.transcript);
   } catch {

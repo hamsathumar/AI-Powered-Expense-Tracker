@@ -4,7 +4,7 @@
 **Purpose:** Evidence collection for Transaction AI architecture design
 **How to log a case:** `Test/AI_TESTING_GUIDE.md`
 
-All three real-world testing rounds, in chronological order. The detailed
+All four real-world testing rounds, in chronological order. The detailed
 cases are kept exactly as originally recorded — including each case's own
 **Status:** line, which reflects the moment of recording. The index below
 shows where each case stands now.
@@ -14,25 +14,28 @@ shows where each case stands now.
 | 1 | TC-001 … TC-020 | 2026-08-14 … 08-15 | 7-day test of the pre-V1 pipeline | Transaction AI V1 (Constitution §23 maps each failure to a rule) |
 | 2 | TC-021 … TC-027 | 2026-08-18 … 08-21 | After the V1 rebuild | `TRANSACTION_AI_AMENDMENTS.md` V1.1 (A–G) |
 | 3 | TC-028 … TC-040 | 2026-08-21 … 09-17 | Post-fix verification | `TRANSACTION_AI_AMENDMENTS.md` V1.3 (V–AH) |
+| 4 | TC-041 … TC-046 | 2026-10-29 … 11-02 | Post-V1.3 verification | `TRANSACTION_AI_AMENDMENTS.md` V1.4 (AI–AO) |
 
-New cases continue the numbering from TC-041 in a new round section at the
+New cases continue the numbering from TC-047 in a new round section at the
 end. Do not delete or renumber existing cases.
 
 ---
 
 # Test Summary
 
-| Metric | Round 1 | Round 2 | Round 3 | **All** |
-|---|---:|---:|---:|---:|
-| Total Test Cases | 20 | 7 | 13 | **40** |
-| PASS | 5 | 0 | 0 | **5** |
-| FAIL | 12 | 4 | 10 | **26** |
-| PARTIAL | 3 | 3 | 3 | **9** |
-| UNKNOWN | 0 | 0 | 0 | **0** |
-| Critical | 4 | 1 | 1 | **6** |
-| High | 5 | 1 | 4 | **10** |
-| Medium | 5 | 4 | 7 | **16** |
-| Low | 6 | 1 | 1 | **8** |
+| Metric | Round 1 | Round 2 | Round 3 | Round 4 | **All** |
+|---|---:|---:|---:|---:|---:|
+| Total Test Cases | 20 | 7 | 13 | 6 | **46** |
+| PASS | 5 | 0 | 0 | 1 | **6** |
+| FAIL | 12 | 4 | 10 | 3 | **29** |
+| PARTIAL | 3 | 3 | 3 | 2 | **11** |
+| UNKNOWN | 0 | 0 | 0 | 0 | **0** |
+| Critical | 4 | 1 | 1 | 0 | **6** |
+| High | 5 | 1 | 4 | 2 | **12** |
+| Medium | 5 | 4 | 7 | 2 | **18** |
+| Low | 6 | 1 | 1 | 1 | **9** |
+
+Round 4's PASS case (TC-043) has no severity.
 
 Round 2's originally recorded summary said FAIL 5; its own index lists 4
 (TC-022, 024, 026, 027) — the figure above is counted from the index.
@@ -85,6 +88,12 @@ Fix = the amendment letter(s) in `TRANSACTION_AI_AMENDMENTS.md`.
 | TC-038 | 3 | 2026-09-13 | Structured Output, Amount Extraction | High | FAIL | Fixed — verified on device 2026-10-07 | V1.3 Z |
 | TC-039 | 3 | 2026-09-17 | Lending, Transaction Classification, Structured Output | High | FAIL | Fixed — verified on device 2026-10-07 | V1.3 AG |
 | TC-040 | 3 | 2026-09-17 | Structured Output, Ambiguity Handling | Medium | FAIL | Fixed — verified on device 2026-10-07 | V1.3 W |
+| TC-041 | 4 | 2026-10-29 | Person Resolution, Repayment, Amount Extraction | Medium | PARTIAL | Fixed — pending device verification | V1.4 AI, AK |
+| TC-042 | 4 | 2026-10-29 | Transaction Type, Repayment, Split Transaction, Amount Extraction | High | FAIL | Fixed — pending device verification | V1.4 AJ, AO |
+| TC-043 | 4 | 2026-10-29 | Repayment, Person Resolution | N/A | PASS | Wording fixed — pending device verification | V1.4 AK |
+| TC-044 | 4 | 2026-10-30 | Other (spoken punctuation), Structured Output, Business Rule Validation | Low | FAIL | Fixed — pending device verification | V1.4 AL, AO |
+| TC-045 | 4 | 2026-11-02 | Time Interpretation | Medium | PARTIAL | Fixed — pending device verification | V1.4 AM |
+| TC-046 | 4 | 2026-11-02 | Transaction Type, Borrowing, Account Resolution, Business Rule Validation | High | FAIL | Fixed — pending device verification | V1.4 AN, AO |
 
 **TC-027 is "Mitigated", not "Fixed", deliberately.** True iOS background
 execution is not achievable here — a suspended app runs no JavaScript and Expo
@@ -1114,3 +1123,338 @@ It has not yet been established why "Food" (the first-mentioned category) was ch
 - **Reproducibility:** Not Tested
 - **Status:** Open
 - **Notes:** This is a distinct failure mode from TC-036, which concerns why the conflict flag was raised at all; TC-040 concerns where that flag is (and is not) shown once it exists. Per the user, the general principle they expect is binary: inputs with no issue should show no flag anywhere, and inputs with a genuine issue should show that flag consistently in every place the transaction appears, starting with the first confirmation screen the user sees. Whether other flagged test cases in this log (e.g. TC-028, TC-031) also exhibited this same screen-visibility gap on their respective "Logged"/"Finish details" confirmation screens was not separately checked at the time and is unknown from existing evidence. Root cause not investigated (evidence collection phase only, per testing guidelines).
+
+---
+
+# Round 4 — TC-041 … TC-046
+
+**Testing Period:** 7-Day Real-World Test (Round 4 — post-V1.3 verification, 2026-10-29 … 11-02)
+
+> **RESOLUTION — 2026-11-15.** Addressed by **Transaction AI V1.4**
+> (amendments AI–AO, unit-tested; device verification pending). Root causes
+> and changes are in `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.4); the per-case
+> mapping is in the index at the top of this log. The cases below are kept
+> exactly as recorded (originally logged as "Round 3 — post-fix verification"
+> in a separate file).
+
+## TC-041
+
+**Test Case ID:** TC-041
+**Date Discovered:** 2026-10-29 (diagnostics timestamp 2026-10-29T08:35:26.963Z)
+
+**User Input:**
+"Spent 300 rupees on lunch using cash and Nuski and Mayees Mowlavi settled all the amounts that they owe me." (voice)
+
+**Context:**
+- Voice input; compound utterance with one expense and two repayment-received intents.
+- Model: gemini-3.5-flash-lite.
+- Evidence: two screenshots (result card "3 logged" and "Why it read this way" panel) plus the full diagnostics export including the raw Gemini JSON.
+- The user did not provide a written explanation of the expected result. Expected Behaviour below is derived from the input wording only.
+- Whether Nuski and Mayees Mowlavi exist as saved people in Kaasu, and whether they have outstanding balances, is Unknown from the evidence.
+
+**Expected Behaviour:**
+- Lunch: expense, Rs 300, account Cash, category Food.
+- Two separate repayment-received (lending) candidates, one per person.
+- Each repayment candidate should carry the person named in the input (Nuski; Mayees Mowlavi), since both names were stated explicitly.
+- Amount: no number was spoken ("all the amounts that they owe me"). Kaasu should either resolve the amount from the outstanding balance owed by each person (if this is supported) or flag the amount as missing while keeping the user's wording. Which of these is the supported behaviour is Unknown.
+- Receiving account was not stated, so asking for the account is reasonable.
+
+**Actual Behaviour (observed):**
+- Lunch · expense · Rs 300.00, account Cash (USER_EXPLICIT), category Food (AI_INTERPRETED) — "Ready to approve". Correct.
+- Two lending candidates created with direction `lend_repayment_received`: "Settlement from Nuski" and "Settlement from Mayees Mowlavi". Split is correct.
+- Both repayment candidates: `paidBy.reference: null`, provenance UNRESOLVED, state UNKNOWN. UI shows "Person needed" / "Pick the person." — even though the person names appear in the candidate names and in the evidence `sourceText`.
+- Both repayment candidates: `amount.expression: null`, `value: null`, UNRESOLVED. The phrase "all the amounts that they owe me" was not kept as the amount expression. UI shows "Amount needed".
+- Both repayment candidates: no account; UI shows "Account needed".
+- Both repayment candidates: `dateExpression.expression: null` with `kind: "relative"`; UI shows "Today".
+- Critic (second check): "Not needed — a short note with one sum of money", although the utterance produced three candidates and two people.
+- What the app adjusted: "Nothing — the reading was used as given."
+
+**Result:** PARTIAL
+
+**Category:** Person Resolution; Repayment; Amount Extraction
+
+**Severity:** Medium
+(Nothing was saved incorrectly; both affected candidates were blocked for user completion. The failure adds manual work but does not appear to corrupt records.)
+
+**Failure Type:** Incorrect entity resolution (person names stated but not set in `paidBy`); Missing required information (amount phrase not captured)
+
+**Reproducibility:** Not Tested
+
+**Status:** Open
+
+**Notes:**
+- Observed: the AI knew who the people were (names used in candidate titles and evidence) but left the structured person field empty.
+- Observed: the critic skip reason ("one sum of money") does not match the input, which contained three intents. Recorded here as a secondary observation; may warrant its own case if seen again.
+- Observed: the null date expression marked `kind: "relative"` is internally inconsistent; the app displayed Today. Minor, recorded for completeness.
+- Preliminary analysis (not confirmed): "settle all amounts owed" may be a pattern where the amount must come from app data rather than the utterance. Whether the AI is given balance context is Unknown.
+- Open question for user: did you expect Kaasu to fill the outstanding balances automatically, or only to ask for the amount?
+- Clarification from user (2026-10-29, after initial recording): the user expected Kaasu to take each person's outstanding balance from the app and record the repayment with that amount. Original Expected Behaviour above is preserved; this clarification resolves the open question. The amount was not resolved from app data in this case.
+- Related: TC-042 (same intent, re-spoken without the lunch expense).
+- User-stated expectation (2026-10-30): names spoken in the voice input should be recognised and used in the AI's outputs. In this case the names appeared in candidate titles but not in the structured person field (`paidBy`). See also TC-044.
+
+---
+
+## TC-042
+
+**Test Case ID:** TC-042
+**Date Discovered:** 2026-10-29 (screenshot time 14:16 local)
+
+**User Input:**
+"Nuski and Mayees Mowlavi settled all the amounts that they owe me in cash." (voice)
+
+**Context:**
+- Voice input; repayment-only follow-up to TC-041 (same two people, same "all the amounts" wording, payment method now stated as cash).
+- Model: gemini-3.5-flash-lite.
+- Evidence: one screenshot of the "Why it read this way" panel over the Finish details screen (labelled INCOME), plus the user's explanation.
+- Raw Gemini response was collapsed in the screenshot and not provided; JSON-level details are Unknown.
+
+**Expected Behaviour (per user):**
+- Repayment-received records (not income).
+- One record per person: Nuski and Mayees Mowlavi.
+- Amount for each taken from the outstanding balance that person owes the user in the app.
+- Account: Cash.
+
+**Actual Behaviour (observed):**
+- One candidate only: "Settlement · income · no amount".
+- Classified as income, not as lending repayment received.
+- The two people were merged into a single candidate; no person is shown on it.
+- Flags: "No amount yet — add one before approving." and "No category selected." (category requested, which applies to income, not repayment).
+- Outstanding balances were not used; amount is empty.
+- No account flag is shown in the panel; whether Cash was set is Unknown from the evidence.
+- Critic: "Not needed — a short note with one sum of money."
+- What the app adjusted: "Nothing — the reading was used as given."
+
+**Result:** FAIL
+
+**Category:** Transaction Type; Repayment; Split Transaction; Amount Extraction
+
+**Severity:** High
+(If the user enters an amount and approves, the money would be saved as income instead of repayment. Income would be overstated and the two people's balances would stay open. This could materially affect financial records.)
+
+**Failure Type:** Incorrect classification; Incorrect transaction structure (two people merged into one record); Missing required information (balance-based amount not resolved)
+
+**Reproducibility:** Not Tested
+(Same wording as TC-041 gave a different classification — lending repayment there, income here. This shows inconsistent output across two inputs, not a reproduction of one failure.)
+
+**Status:** Open
+
+**Notes:**
+- Observed: adding "in cash" and removing the lunch expense changed the result from two lending repayments (TC-041) to one income record.
+- Observed: the critic skipped again with the same reason ("one sum of money"), although two people were named. Second occurrence (see TC-041).
+- Preliminary analysis (not confirmed): "settled what they owe me" may not be reliably tied to repayment when no number is given. Whether the AI receives outstanding-balance data is Unknown.
+- User requested a fix. Per project rules, fixes are deferred to the post-testing analysis.
+- Contrast evidence (TC-043, same day): when the two repayments were spoken as two separate sentences, Kaasu produced two correct repayment records with amounts from outstanding balances. Per the user, the failure in this case appears when both people share one combined sentence.
+
+---
+
+## TC-043
+
+**Test Case ID:** TC-043
+**Date Discovered:** 2026-10-29 (screenshot time 14:19 local)
+
+**User Input:**
+"Nuski settled all the amount he owed me to my cash. And Myllavi settled all the amount he owe me to my cash." (voice transcript as shown)
+
+**Context:**
+- Voice input; control re-test of TC-041/TC-042, with each repayment spoken as its own sentence.
+- Model: gemini-3.5-flash-lite.
+- Evidence: one screenshot of the "Why it read this way" panel ("2 logged"), plus the user's explanation.
+- Raw Gemini response was collapsed and not provided.
+- "Myllavi" is a transcription of "Mowlavi"/"Mayees Mowlavi".
+
+**Expected Behaviour (per user):**
+- Two repayment-received records, one per person.
+- Amounts taken from each person's outstanding balance.
+- Account: Cash.
+
+**Actual Behaviour (observed):**
+- "Repayment from Nuski · lending · Rs300.00" — note: "Unresolved conflict: Nuski's approved balance is Rs300.00 — this settles it in full. Confirm the amount."
+- "Repayment from Mayees Mowlavi · lending · Rs100.00" — same note with Rs100.00.
+- The mis-transcribed "Myllavi" was matched to Mayees Mowlavi.
+- Amounts were taken from the app's outstanding balances.
+- Account not visible in the panel; whether Cash was set is Unknown.
+- Critic: "Not needed — a short note with one sum of money."
+- What the app adjusted: "Nothing — the reading was used as given."
+
+**Result:** PASS
+
+**Category:** Repayment; Person Resolution
+
+**Severity:** N/A (PASS)
+
+**Failure Type:** None for the core result
+
+**Reproducibility:** Not Tested
+
+**Status:** Open (kept open as contrast evidence for TC-042)
+
+**Notes:**
+- Observed, per user: the same intent succeeds when spoken as separate sentences and fails when combined into one sentence (TC-042). Evidence is two inputs only.
+- Observed: balance-based amount resolution is possible in the current build; it did not happen in TC-041 or TC-042.
+- Secondary observation: the confirmation is labelled "Unresolved conflict" although the amount matches the balance. The wording may read as an error. Low impact; recorded for review.
+- Secondary observation: the critic skipped with "one sum of money" for a third time (TC-041, TC-042, TC-043), here with two amounts present.
+
+---
+
+## TC-044
+
+**Test Case ID:** TC-044
+**Date Discovered:** 2026-10-30 (screenshot time 15:55 local)
+
+**User Input:**
+"Received 5000 rupees to room account, label it as re..." (voice; transcript truncated on the result card). Per the user and the generated name, the spoken label was "rent hyphen Nizam Mowlavi". The full transcript is Unknown.
+
+**Context:**
+- Voice input; single income with a user-dictated label.
+- The user spoke the punctuation mark "hyphen" as a word, intending the symbol "-".
+- Evidence: one screenshot of the "Logged" result card, plus the user's explanation. The "Why?" panel and raw response were not provided; the model is Unknown.
+- Whether the word "hyphen" came from the speech-to-text layer or was passed through by the AI is Unknown.
+
+**Expected Behaviour (per user):**
+- Spoken punctuation words such as "hyphen", "colon", "semicolon", and "open/close bracket" should be turned into the matching symbols in generated text.
+- Expected name: "Rent - Nizam Mowlavi" (or similar with the symbol "-").
+
+**Actual Behaviour (observed):**
+- Income · +Rs5,000.00 · account Room · date Today.
+- Name: "Rent Hyphen Nizam Mowlavi". The word "Hyphen" was kept as text and capitalised as part of the title.
+- Flag: "Category needed — Pick a category."
+
+**Result:** FAIL
+
+**Category:** Other (spoken punctuation handling; flagged for review); Structured Output; Business Rule Validation (application-layer label override — see update below)
+
+**Severity:** Low
+(Wording/formatting issue in the transaction name. Amount, type, account, and date were correct; no financial data affected.)
+
+**Failure Type:** Incorrect extraction (spoken punctuation word kept as text)
+
+**Reproducibility:** Reproduced (2 runs on 2026-10-30, 15:55 and 16:03 local; hyphen kept as a word both times)
+(Only "hyphen" was tested. Colon, semicolon, brackets, and other symbols are not yet tested.)
+
+**Status:** Open
+
+**Notes:**
+- Observed: the core transaction (income, amount, account) was read correctly; only the label text failed.
+- Taxonomy: no existing category covers spoken punctuation. Recorded as "Other" per guideline 19, for review in final analysis.
+- Suggested follow-up tests (not yet run): "colon", "semicolon", "open bracket ... close bracket", "slash", "dash".
+- User requested a fix. Per project rules, fixes are deferred to the post-testing analysis.
+
+**Update — additional evidence (2026-10-30, diagnostics timestamp 2026-10-30T10:33:32.189Z):**
+
+Second run of the same input, with full diagnostics export. Original observations above are preserved.
+
+- Heard (transcript): "Received 5000 rupees to room account, label it as rent hyphen nizam molevi". The speech-to-text output wrote "hyphen" as a word, not as "-".
+- Model: gemini-3.5-flash-lite.
+- Gemini returned (observed):
+  - operation income, amount 5000 (USER_EXPLICIT, KNOWN), account Room (USER_EXPLICIT, KNOWN).
+  - name: "Rent Nizam Mowlavi". Gemini dropped the word "hyphen" but did not insert the "-" symbol. It also corrected "molevi" to "Mowlavi".
+  - person: "Nisam Mowlavi" (AI_INTERPRETED, KNOWN). Spelling differs from the name field ("Nizam"). Whether this matches a saved person is Unknown.
+  - evidence: "label it as rent hyphen nizam molevi" supports "name and person association".
+- What the app adjusted (observed): "name taken from the label the user asked for".
+- Final displayed result: "Rent Hyphen Nizam Molevi" (income, 5000.00) — blocked: No category selected.
+- Critic: "Not needed — a short note with one sum of money."
+
+**Layer attribution (observed, per diagnostics):**
+- Speech-to-text layer: produced the word "hyphen" rather than the symbol.
+- AI layer: removed the word but did not convert it to "-". Partial handling.
+- Application layer: replaced the AI's name with the raw spoken label and title-cased it. This put "Hyphen" back into the name and also undid the AI's "Molevi" → "Mowlavi" correction.
+- The visible failure ("Hyphen" in the name) comes from the application-layer override in this run. This is on the AI-testing scope boundary, recorded because it directly affects the AI-driven flow.
+
+**Further observations from this run:**
+- The person spelling is inconsistent within one response ("Nizam" in name, "Nisam" in person).
+- Whether the person association was shown or saved for this income is Unknown from the evidence.
+- The critic skipped with "one sum of money" for a fourth time (TC-041, TC-042, TC-043, TC-044).
+
+**User-stated expectation (2026-10-30, 16:07 local):**
+- Names spoken in the voice input should be recognised and used in the AI's outputs.
+- Applied to this case: the spoken name ("nizam molevi", meaning Nizam Mowlavi) should appear spelled correctly and the same way in both the transaction name and the person field.
+- Observed against this expectation: Gemini returned "Nizam Mowlavi" in the name and "Nisam Mowlavi" in the person field. The app-layer label override then showed the raw transcript spelling "Nizam Molevi". So the correctly recognised name did not reach the final output.
+- Related: TC-041 (names spoken but person field left empty) and TC-043 (mis-transcribed "Myllavi" correctly matched to Mayees Mowlavi — contrast evidence).
+
+---
+
+## TC-045
+
+**Test Case ID:** TC-045
+**Date Discovered:** 2026-11-02 (screenshot time 09:57 local)
+
+**User Input:**
+"Spent 160 rupees on snacks yesterday night and Nuski paid it." (voice)
+
+**Context:**
+- Voice input, spoken on 2026-11-02 at about 09:56 local.
+- "Yesterday night" means the evening of 2026-11-01.
+- Evidence: one screenshot of the Finish details screen, plus the user's explanation. The "Why?" panel and raw Gemini response were not provided; the model is Unknown.
+- The same input is also logged as TC-046 for a different failure (account requirement).
+
+**Expected Behaviour (per user):**
+- Date: 1 Nov 2026.
+- Time: a night-time value matching "night" (exact time convention Unknown — e.g. a default evening/night time).
+
+**Actual Behaviour (observed):**
+- Date: 1 Nov 2026 — correct.
+- Time: 09:56 — the time the input was recorded, not a night-time value.
+- Hint under the date: You said "yesterday night".
+
+**Result:** PARTIAL
+
+**Category:** Time Interpretation
+
+**Severity:** Medium
+(The transaction time is wrong by about 12 hours. The date is correct, so daily totals are not affected. Time-based views or ordering may be wrong.)
+
+**Failure Type:** Incorrect temporal interpretation (part-of-day word ignored; current time used)
+
+**Reproducibility:** Not Tested
+(One input observed, with "night". Per the user, "morning", "evening", and similar words are also not processed, and exact spoken times work correctly. These claims are not yet backed by logged cases.)
+
+**Status:** Open
+
+**Notes:**
+- Observed: the app saw the phrase "yesterday night", as the hint shows, but only the "yesterday" part changed the result.
+- Whether the AI returned a time-of-day value that the app ignored, or returned none, is Unknown without the diagnostics.
+- Suggested follow-up tests (not yet run): "this morning", "last evening", "at noon", "afternoon", and an exact time such as "at 8 pm" as a control.
+
+---
+
+## TC-046
+
+**Test Case ID:** TC-046
+**Date Discovered:** 2026-11-02 (screenshot time 09:57 local)
+
+**User Input:**
+"Spent 160 rupees on snacks yesterday night and Nuski paid it." (voice)
+
+**Context:**
+- Same input as TC-045.
+- The user did not name an account. Nuski paid the full amount on the user's behalf.
+- Evidence: one screenshot of the Finish details screen, plus the user's explanation. The "Why?" panel and raw Gemini response were not provided.
+- Whether the person (Nuski / paidBy) was captured on the record is Unknown; the visible part of the screen shows no person field.
+
+**Expected Behaviour (per user):**
+- No account of the user's should be required, because the user's money did not move.
+- The user's wording ("this might need a big process to brainstorm and define the logic") shows that the correct target structure is not yet defined. Possible readings include a borrowing (the user now owes Nuski 160) or an expense paid by another person. Which one Kaasu should use is Unknown.
+
+**Actual Behaviour (observed):**
+- Classified as EXPENSE, Rs 160.00, name "Snacks", date 1 Nov 2026 09:56.
+- Account picker shown (Commercial Bank, Cash, BOC, eZ Wallet), with no account selected.
+- Approve is disabled, so an account appears to be required before saving.
+
+**Result:** FAIL
+
+**Category:** Transaction Type; Borrowing; Account Resolution; Business Rule Validation
+
+**Severity:** High
+(To save, the user must pick one of their own accounts. That would take Rs 160 out of an account the money never left, and it does not record that the user owes Nuski. Both the account balance and the lending/borrowing records would be wrong.)
+
+**Failure Type:** Incorrect transaction structure (paid-by-other spending treated as the user's own expense)
+
+**Reproducibility:** Not Tested
+
+**Status:** Open
+
+**Notes:**
+- Observed: "Nuski paid it" did not change the transaction type or remove the account requirement.
+- The account requirement may come from the AI's output or from an app-layer rule for expenses. This is Unknown without the diagnostics; it may sit on the AI-testing scope boundary.
+- Architectural note (user, 2026-11-02 — recorded, not a requirement): the user expects that defining how "paid by another person" transactions should work will need a dedicated design discussion.
+- Related: TC-041 (names spoken but person field left empty).

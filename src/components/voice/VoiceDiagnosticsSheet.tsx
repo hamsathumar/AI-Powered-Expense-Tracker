@@ -12,6 +12,7 @@ import { Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { describeCritic, diagnosticsReport, type VoiceDiagnostics } from '@/ai/diagnostics';
+import { describeTimings } from '@/ai/timing';
 import { formatAmount } from '@/domain/money';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontFamily, layout, minTouchTarget, radius, screenPaddingH, space, type } from '@/theme/tokens';
@@ -70,6 +71,25 @@ function SheetBody({ d, onClose }: { d: VoiceDiagnostics; onClose: () => void })
             <Text style={[type.body, { color: colors.text }]}>“{d.transcript}”</Text>
             <Text style={[type.caption, { color: colors.textMuted }]}>Model: {d.model}</Text>
           </Section>
+
+          {d.timings ? (
+            // Phase 0 (speed investigation): where the time went.
+            <Section title="Timing" color={colors.textSubtle}>
+              {(() => {
+                const t = describeTimings(d.timings);
+                return (
+                  <>
+                    <Text style={[type.body, { color: colors.text }]}>{t.summary}</Text>
+                    {t.lines.map((line, i) => (
+                      <Text key={i} style={[type.caption, { color: colors.textMuted }]}>
+                        • {line}
+                      </Text>
+                    ))}
+                  </>
+                );
+              })()}
+            </Section>
+          ) : null}
 
           <Section title="Result" color={colors.textSubtle}>
             {d.operations.length === 0 ? (

@@ -12,6 +12,8 @@
  */
 import { formatAmount } from '@/domain/money';
 
+import { isSuspiciousEntityReference } from './injection';
+import { deriveName } from './naming';
 import type {
   Conflict,
   EntityRef,
@@ -23,6 +25,7 @@ import type {
   ResolvedRef,
   SpecializedOperation,
   UnqualifiedIntent,
+  ValidatedInterpretation,
 } from './types';
 
 export interface EntityLite {
@@ -31,6 +34,9 @@ export interface EntityLite {
   /** Accounts only: 'bank' | 'card' | 'cash'. Lets a type word the user
    *  added ("BOC *bank* account") be checked against the real account. */
   kind?: string;
+  /** Accounts only: a private account (migration 8). Never chosen by a
+   *  default — its spending would vanish from personal reports. */
+  isPrivate?: boolean;
 }
 
 /** A person's APPROVED lending balance (+ they owe the user), plus how many
@@ -61,7 +67,7 @@ function fold(s: string): string {
 }
 
 /** Levenshtein distance, bailing out once it exceeds `max`. */
-function editDistance(a: string, b: string, max: number): number {
+export function editDistance(a: string, b: string, max: number): number {
   if (Math.abs(a.length - b.length) > max) return max + 1;
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
@@ -239,9 +245,12 @@ function fillFromBalance(
   intent: UnqualifiedIntent,
   person: ResolvedRef | null,
   ctx: ResolveContext,
+  spoken: string[] = [],
 ): { amountMinor: number; conflict: Conflict } | null {
   if (intent.operation !== 'lending' || !person?.id || !ctx.personBalances) return null;
-  const said = [intent.amount.expression, ...intent.evidence.map((e) => e.sourceText)];
+  // V1.4 (TC-041): the model may leave the whole-balance words out of the
+  // amount and evidence; the sentences naming this person count too.
+  const said = [intent.amount.expression, ...intent.evidence.map((e) => e.sourceText), ...spoken];
   if (!said.some(isWholeBalanceExpression)) return null;
   const balance = ctx.personBalances.get(person.id);
   if (!balance) return null;
@@ -398,6 +407,252 @@ export function inheritFundingAccount(ops: ResolvedOperation[], transcript: stri
   });
 }
 
+// ── V1.4 (TC-041): the person the user NAMED, when the model left it out ──
+/** Whole-name mentions of saved people in `text`. A name inside a longer
+ *  matched name ("Mowlavi" inside "Mayees Mowlavi") is not a second person. */
+function peopleNamedIn(text: string, people: EntityLite[]): EntityLite[] {
+  if (!text) return [];
+  const found = people.filter((p) => {
+    const name = p.name.trim();
+    if (name.length < 2) return false;
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegex(name)}(?![\\p{L}\\p{N}])`, 'iu').test(text);
+  });
+  return found.filter(
+    (p) =>
+      !found.some(
+        (q) => q !== p && q.name.length > p.name.length && q.name.toLowerCase().includes(p.name.toLowerCase()),
+      ),
+  );
+}
+
+/** Sentences of the transcript that name `name` (split at . ; ! ?). */
+function sentencesMentioning(transcript: string, name: string): string[] {
+  if (!transcript || !name) return [];
+  const needle = name.toLowerCase();
+  return transcript.split(/[.;!?]+/).filter((s) => s.toLowerCase().includes(needle));
+}
+
+/**
+ * A lending operation's person, recovered from the model's own words when it
+ * gave none — TC-041: "Settlement from Nuski" carried the name in its title
+ * and evidence, but `person` was empty, so "all they owe me" could not be
+ * filled from Nuski's balance.
+ *
+ * Only a SAVED person counts, found by whole name in the operation's name
+ * (or, failing that, in its evidence when that names exactly one person).
+ * It resolves outright only when the user really said that name; a name that
+ * appears only in the model's text is offered as a suggestion the user must
+ * confirm. A reference the model DID give is never overridden.
+ */
+export function recoverPerson(
+  ref: EntityRef | null,
+  name: string,
+  evidence: { sourceText: string }[],
+  transcript: string,
+  people: EntityLite[],
+): ResolvedRef | null {
+  const resolved = resolveRef(ref, people);
+  if (ref?.reference) return resolved;
+  const fromName = peopleNamedIn(name, people);
+  const pick =
+    fromName.length === 1 ? fromName : peopleNamedIn(evidence.map((e) => e.sourceText).join('\n'), people);
+  if (pick.length !== 1) return resolved;
+  const person = pick[0]!;
+  if (peopleNamedIn(transcript, [person]).length === 1) {
+    return { reference: person.name, id: person.id, status: 'resolved', options: [] };
+  }
+  return { reference: person.name, id: null, status: 'ambiguous', options: [{ id: person.id, name: person.name }] };
+}
+
+// ── V1.4 (TC-042): "Nuski and Mayees settled all they owe me" ────────────
+const REPAY_VERB = /\b(?:settled?|settling|repaid|repays?|paid\s+(?:me\s+)?back|pays?\s+(?:me\s+)?back|gave\s+(?:me\s+)?back|returned|cleared)\b/i;
+const OWED_TO_ME = /\b(?:owe[sd]?|owing)\s+me\b|\b(?:paid|gave|pays?)\s+me\s+back\b|\brepaid\s+me\b/i;
+const OWED_BY_ME =
+  /\b(?:i|we)\s+(?:still\s+)?(?:owed?|owing)\b|\b(?:i|we)\s+(?:have\s+|had\s+)?(?:settled|repaid|paid\s+back|cleared|returned)\b/i;
+/** Where a name part stops being a name: "Sham in cash" → "Sham". */
+const NAME_TAIL = /\s+\b(?:in|into|to|from|via|using|with|by|through|on|at|for|all|everything|today|yesterday)\b.*$/i;
+const NAME_LEAD = /^(?:(?:both|also|and|my|our|friends?)\s+)+/i;
+const NOT_A_NAME = /^(?:i|me|we|us|he|she|they|them|him|her|it|my|our|the|a|an|all|everything|both|someone|somebody)$/i;
+
+function repaymentDirection(text: string): LendingDirection | null {
+  const toMe = OWED_TO_ME.test(text);
+  const byMe = OWED_BY_ME.test(text);
+  if (toMe === byMe) return null;
+  return toMe ? 'lend_repayment_received' : 'borrow_repayment_made';
+}
+
+function cleanNamePart(part: string): string | null {
+  const text = part.replace(NAME_TAIL, '').replace(NAME_LEAD, '').trim();
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 3) return null;
+  if (!words.every((w) => /^[\p{L}'’.-]+$/u.test(w) && !NOT_A_NAME.test(w))) return null;
+  if (isSuspiciousEntityReference(text)) return null;
+  return text;
+}
+
+/**
+ * The people a whole-balance repayment sentence names: the run of names right
+ * before the repayment verb ("… and Nuski and Mayees Mowlavi settled …") when
+ * they repaid the user, or right after "owe / to" when the user repaid them.
+ * Every name is kept — a mis-heard one becomes a "Pick the person" card,
+ * never a silent drop.
+ */
+function namesInRepayment(sentence: string, direction: LendingDirection): string[] {
+  const split = (t: string) => t.split(/\s*(?:,|&|\band\b|\bplus\b)\s*/i);
+  if (direction === 'lend_repayment_received') {
+    const verb = sentence.match(REPAY_VERB);
+    if (!verb || verb.index === undefined) return [];
+    const parts = split(sentence.slice(0, verb.index));
+    const names: string[] = [];
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const name = cleanNamePart(parts[i]!);
+      if (!name) break;
+      names.unshift(name);
+    }
+    return names;
+  }
+  const cues = [...sentence.matchAll(/\b(?:owed?|owing|to|repaid|paid\s+back|settled\s+(?:up\s+)?with)\b/gi)];
+  const last = cues[cues.length - 1];
+  if (!last || last.index === undefined) return [];
+  const names: string[] = [];
+  for (const part of split(sentence.slice(last.index + last[0].length))) {
+    const name = cleanNamePart(part);
+    if (!name) break;
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * TC-042: the model merged "Nuski and Mayees Mowlavi settled all the amounts
+ * they owe me" into ONE amountless income with no person. When an amountless
+ * income / lending / unknown intent (with no person of its own) carries
+ * whole-balance repayment wording, and its sentence names at least one SAVED
+ * person exactly, it becomes one repayment per person named — each then
+ * filled from that person's approved balance with the usual blocking
+ * confirmation (D5), or left "Amount needed".
+ *
+ * Only amountless intents are touched, so no spoken sum can be counted twice
+ * (TC-021); the direction must be stated ("owe me" / "I owe"), never guessed.
+ */
+function expandGroupRepayment(
+  intent: UnqualifiedIntent,
+  scope: SpokenScope,
+  ctx: ResolveContext,
+): UnqualifiedIntent[] | null {
+  if (intent.operation === 'transfer' || intent.operation === 'expense') return null;
+  if (intent.operation === 'lending') {
+    if (intent.person?.reference) return null;
+    if (intent.direction === 'lend' || intent.direction === 'borrow') return null;
+    // Its own name already says who (TC-041) — that is the person, not a group.
+    if (recoverPerson(null, intent.name, intent.evidence, scope.transcript, ctx.people)?.reference) return null;
+  }
+  const own = intent.evidence.map((e) => e.sourceText.trim().toLowerCase()).filter((t) => t.length >= 8);
+  const sentences = scope.transcript
+    .split(/[.;!?]+/)
+    .map((s) => s.trim())
+    .filter((s) => s && isWholeBalanceExpression(s) && REPAY_VERB.test(s))
+    .filter((s) => scope.soleOperation || own.some((t) => s.toLowerCase().includes(t.slice(0, 15))));
+  if (sentences.length !== 1) return null;
+  const sentence = sentences[0]!;
+  const direction =
+    intent.operation === 'lending' && intent.direction ? intent.direction : repaymentDirection(sentence);
+  if (!direction) return null;
+  const heard = namesInRepayment(sentence, direction);
+  const exact = heard.map((h) => ctx.people.find((p) => p.name.trim().toLowerCase() === h.toLowerCase()));
+  if (!exact.some(Boolean)) return null;
+  return heard.map((h, i) => {
+    const reference = exact[i]?.name ?? h;
+    return {
+      ...intent,
+      localId: `${intent.localId}-p${i + 1}`,
+      operation: 'lending',
+      direction,
+      person: { reference, provenance: 'USER_EXPLICIT', state: 'KNOWN', candidates: [] },
+      category: null,
+      name: deriveName({ operation: 'lending', personReference: reference, direction }),
+      evidence: [{ sourceText: sentence, supports: 'whole-balance repayment by a person named here' }, ...intent.evidence],
+    };
+  });
+}
+
+// ── V1.4 (TC-046): "…and Nuski paid it" ──────────────────────────────────
+function payerPattern(name: string): RegExp {
+  const n = escapeRegex(name.trim());
+  const end = String.raw`(?=\s*(?:$|[,.;!?]|\s(?:and|but|so|too|as\s+well|yesterday|today)\b))`;
+  const what = String.raw`(?:\s+(?:for\s+)?(?:it|that|this|the\s+(?:bill|amount|whole\s+thing)|everything|for\s+(?:me|us)|on\s+my\s+behalf))?`;
+  return new RegExp(
+    String.raw`(?:^|[^\p{L}\p{N}])${n}\s+(?:has\s+|had\s+|already\s+)?paid${what}${end}` +
+      String.raw`|(?:^|[^\p{L}\p{N}])${n}\s+paid\b[^,.;!?]{0,60}\bfor\s+(?:me|us)\b` +
+      String.raw`|\bpaid\s+by\s+${n}(?![\p{L}\p{N}])`,
+    'iu',
+  );
+}
+
+/**
+ * TC-046: an expense whose sentence says a SAVED person paid it ("snacks for
+ * 160 and Nuski paid it", "paid by Nuski") but where the model gave no
+ * `paidBy`. The name must precede "paid" (so "I paid Nuski" never counts) and
+ * nothing may follow it but the thing paid for — "Nuski paid me back" is a
+ * repayment, not this. Skipped when the model already recorded a borrow from
+ * that person for the same amount, which would double the debt.
+ */
+function payerFromWords(
+  cand: OrdinaryCandidate,
+  scope: SpokenScope,
+  people: EntityLite[],
+  siblings: OrdinaryCandidate[],
+): EntityRef | null {
+  if (cand.operation !== 'expense' || cand.paidBy?.reference || cand.amount.valueMinor === null) return null;
+  const digits = String(Math.round(cand.amount.valueMinor / 100));
+  const sentences = scope.transcript
+    .split(/[.;!?]+/)
+    .filter((s) => scope.soleOperation || new RegExp(`(^|\\D)${digits}(\\D|$)`).test(s));
+  const payers = peopleNamedIn(sentences.join('. '), people).filter((p) =>
+    sentences.some((s) => payerPattern(p.name).test(s)),
+  );
+  if (payers.length !== 1) return null;
+  const payer = payers[0]!;
+  // One of several payers ("Sham and Nuski paid it") is not Nuski alone.
+  const together = people.some(
+    (q) =>
+      q !== payer &&
+      new RegExp(`${escapeRegex(q.name.trim())}\\s*(?:,|&|\\band\\b)\\s*${escapeRegex(payer.name.trim())}\\s+paid`, 'iu').test(
+        sentences.join('. '),
+      ),
+  );
+  if (together) return null;
+  const doubled = siblings.some(
+    (o) =>
+      o.operation === 'lending' &&
+      o.direction === 'borrow' &&
+      o.amount.valueMinor === cand.amount.valueMinor &&
+      o.person?.reference?.trim().toLowerCase() === payer.name.toLowerCase(),
+  );
+  if (doubled) return null;
+  return { reference: payer.name, provenance: 'USER_EXPLICIT', state: 'KNOWN', candidates: [] };
+}
+
+/**
+ * The account that hosts a paid-by-someone-else pair (owner decision
+ * 2026-11-15, TC-046). The borrow + expense pair nets to zero on whichever
+ * account holds it, so the user should not have to pick one: the account
+ * literally named "Cash" is used when there is exactly one and it is not
+ * private. Otherwise the user picks, as before.
+ */
+export function pairHostAccount(accounts: EntityLite[]): EntityLite | null {
+  const cash = accounts.filter((a) => a.name.trim().toLowerCase() === 'cash');
+  if (cash.length !== 1 || cash[0]!.isPrivate) return null;
+  return cash[0]!;
+}
+
+function withPairHost(resolved: ResolvedRef | null, accounts: EntityLite[]): ResolvedRef | null {
+  if (resolved && (resolved.status === 'resolved' || resolved.reference)) return resolved;
+  const host = pairHostAccount(accounts);
+  if (!host) return resolved;
+  return { reference: host.name, id: host.id, status: 'resolved', options: [] };
+}
+
 function categoryPool(op: OrdinaryCandidate['operation'], ctx: ResolveContext): EntityLite[] {
   return op === 'income' ? ctx.incomeCategories : ctx.expenseCategories;
 }
@@ -436,12 +691,17 @@ export function resolveUnqualified(
     });
   }
 
-  const person = resolveRef(intent.person, ctx.people);
+  const transcript = scope?.transcript ?? '';
+  const person =
+    operation === 'lending'
+      ? recoverPerson(intent.person, intent.name, intent.evidence, transcript, ctx.people)
+      : resolveRef(intent.person, ctx.people);
   const personName = person?.id ? ctx.people.find((p) => p.id === person.id)?.name : undefined;
   const fromBalance = fillFromBalance(
     intent,
     person && personName ? { ...person, options: [{ id: person.id!, name: personName }] } : person,
     ctx,
+    personName ? sentencesMentioning(transcript, personName) : [],
   );
   if (fromBalance) conflicts.unshift(fromBalance.conflict);
 
@@ -480,21 +740,23 @@ export function resolveCandidate(
   scope?: SpokenScope,
 ): ResolvedOperation {
   const isExpInc = cand.operation === 'expense' || cand.operation === 'income';
+  const paidBy = cand.operation === 'expense' ? resolveRef(cand.paidBy, ctx.people) : null;
+  const spokenAccount = withSpokenAccount(
+    resolveAccountRef(cand.account, ctx.accounts),
+    cand.operation,
+    scopeTexts(scope, cand.evidence, [
+      cand.person?.reference,
+      cand.amount.expression?.replace(/\D+/g, '') || cand.amount.expression,
+    ]),
+    ctx.accounts,
+  );
   return {
     localId: cand.localId,
     kind: cand.operation,
     operation: cand.operation,
     amountMinor: cand.amount.valueMinor,
     amountProvenance: cand.amount.provenance,
-    account: withSpokenAccount(
-      resolveAccountRef(cand.account, ctx.accounts),
-      cand.operation,
-      scopeTexts(scope, cand.evidence, [
-        cand.person?.reference,
-        cand.amount.expression?.replace(/\D+/g, '') || cand.amount.expression,
-      ]),
-      ctx.accounts,
-    ),
+    account: paidBy ? withPairHost(spokenAccount, ctx.accounts) : spokenAccount,
     toAccount:
       cand.operation === 'transfer'
         ? withCashDestination(
@@ -504,13 +766,16 @@ export function resolveCandidate(
           )
         : null,
     category: isExpInc ? resolveRef(cand.category, categoryPool(cand.operation, ctx)) : null,
-    person: resolveRef(cand.person, ctx.people),
+    person:
+      cand.operation === 'lending'
+        ? recoverPerson(cand.person, cand.name, cand.evidence, scope?.transcript ?? '', ctx.people)
+        : resolveRef(cand.person, ctx.people),
     direction: cand.direction,
     requestedLabel: cand.requestedLabel,
     dateExpression: cand.date.expression,
     name: cand.name,
     note: cand.note,
-    paidBy: cand.operation === 'expense' ? resolveRef(cand.paidBy, ctx.people) : null,
+    paidBy,
     conflicts: cand.conflicts,
     transcript: '',
     specialized: null,
@@ -552,4 +817,71 @@ export function resolveSpecialized(op: SpecializedOperation, ctx: ResolveContext
     transcript: '',
     specialized: op,
   };
+}
+
+/**
+ * Resolve a whole validated interpretation — the ONE path both the app
+ * (`interpretVoice`) and the eval harness (`score.ts`) use, so a replay
+ * reaches exactly the end state the app would (V1.4). Returns the operations
+ * plus what the app adjusted, for the diagnostics.
+ */
+export function resolveInterpretation(
+  validated: ValidatedInterpretation,
+  ctx: ResolveContext,
+): { operations: ResolvedOperation[]; issues: string[] } {
+  const issues: string[] = [];
+  const transcript = validated.transcript;
+  const count =
+    validated.candidates.length + validated.specializedOperations.length + validated.unqualifiedIntents.length;
+  const scope: SpokenScope = { transcript, soleOperation: count === 1 };
+
+  // TC-046: who paid, from the user's words. Never alongside a bill split,
+  // which records its own payer.
+  const hasSplit = validated.specializedOperations.some((s) => s.kind === 'bill_split');
+  const candidates = validated.candidates.map((c) => {
+    const payer = hasSplit ? null : payerFromWords(c, scope, ctx.people, validated.candidates);
+    if (!payer) return c;
+    issues.push(`"${payer.reference}" paid for it, taken from what the user said`);
+    return { ...c, paidBy: payer };
+  });
+
+  // TC-042: one merged whole-balance repayment → one per person named.
+  const intents = validated.unqualifiedIntents.flatMap((u) => {
+    const expanded = expandGroupRepayment(u, scope, ctx);
+    if (!expanded) return [u];
+    issues.push(`one repayment by ${expanded.length} people read as one per person`);
+    return expanded;
+  });
+
+  const fromIntents = intents.map((u) => {
+    const op = resolveUnqualified(u, ctx, scope);
+    if (op.operation === 'lending' && !u.person?.reference && op.person?.reference) {
+      issues.push(`person "${op.person.reference}" taken from the name the user said`);
+    }
+    return op;
+  });
+  // Several readings of the same person's whole-balance repayment (the model
+  // split it AND the app expanded it) are one repayment.
+  const seen = new Set<string>();
+  const uniqueIntents = fromIntents.filter((op) => {
+    if (op.operation !== 'lending' || !op.person?.reference) return true;
+    if (op.direction !== 'lend_repayment_received' && op.direction !== 'borrow_repayment_made') return true;
+    const key = `${op.direction}|${op.person.id ?? op.person.reference.trim().toLowerCase()}`;
+    if (seen.has(key)) {
+      issues.push(`dropped a second repayment card for "${op.person.reference}"`);
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+
+  const operations = inheritFundingAccount(
+    [
+      ...candidates.map((c) => resolveCandidate(c, ctx, scope)),
+      ...validated.specializedOperations.map((s) => resolveSpecialized(s, ctx)),
+      ...uniqueIntents,
+    ],
+    transcript,
+  ).map((o) => ({ ...o, transcript }));
+  return { operations, issues };
 }
