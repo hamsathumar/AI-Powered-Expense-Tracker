@@ -96,6 +96,8 @@ describe('voice diagnostics (Phase C)', () => {
         'operations',
         'rawResponse',
         'repairedResponse',
+        // Phase 0: durations, token counts and the app's own error text only.
+        'timings',
         'transcript',
         'validationIssues',
         'version',

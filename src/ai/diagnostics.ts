@@ -16,6 +16,7 @@
  */
 import type { Blocker } from '@/ai/interpretation/gate';
 import type { ResolvedOperation } from '@/ai/interpretation/types';
+import { describeTimings, parseTimings, type VoiceTimings } from '@/ai/timing';
 
 export const DIAGNOSTICS_VERSION = 1;
 
@@ -64,6 +65,8 @@ export interface VoiceDiagnostics {
   /** The critic-requested re-read, when one was made (truncated). */
   repairedResponse: string | null;
   operations: DiagnosticOperation[];
+  /** Where the time went (Phase 0). Null on records made before it existed. */
+  timings: VoiceTimings | null;
 }
 
 function truncate(json: string): string {
@@ -90,6 +93,7 @@ export interface DiagnosticsInput {
   rawResponse: unknown;
   repairedResponse?: unknown;
   operations: { op: ResolvedOperation; blockers: Blocker[] }[];
+  timings?: VoiceTimings;
   now?: Date;
 }
 
@@ -114,6 +118,7 @@ export function buildDiagnostics(input: DiagnosticsInput): VoiceDiagnostics {
         b.code === 'unresolved_conflict' ? b.message.replace(/^Unresolved conflict:\s*/i, 'Please confirm: ') : b.message,
       ),
     })),
+    timings: input.timings ?? null,
   };
 }
 
@@ -136,6 +141,7 @@ export function parseDiagnostics(raw: string | null): VoiceDiagnostics | null {
       rawResponse: d.rawResponse,
       repairedResponse: typeof d.repairedResponse === 'string' ? d.repairedResponse : null,
       operations: Array.isArray(d.operations) ? d.operations : [],
+      timings: parseTimings(d.timings),
     };
   } catch {
     return null;
@@ -168,6 +174,12 @@ export function diagnosticsReport(d: VoiceDiagnostics): string {
     `When: ${d.at}`,
     `Heard: “${d.transcript}”`,
     '',
+    ...(d.timings
+      ? (() => {
+          const t = describeTimings(d.timings);
+          return ['Timing:', t.summary, ...t.lines.map((l) => `- ${l}`), ''];
+        })()
+      : []),
     'Result:',
     ...d.operations.map(
       (o) =>

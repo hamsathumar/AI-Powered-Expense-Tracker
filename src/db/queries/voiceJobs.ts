@@ -200,10 +200,14 @@ export async function markVoiceJobFailed(id: string, error: string): Promise<voi
  * suspended mid-request — that is the platform interrupting us, not a failure
  * of the recording.
  */
-export async function requeueVoiceJob(id: string): Promise<void> {
+/** Put a job back in the queue. `error` (a genuine failure) is kept on the
+ *  row so the next attempt's timing can say why it is a retry (Phase 0); a
+ *  suspension requeue passes none and leaves any earlier one as it was. */
+export async function requeueVoiceJob(id: string, error?: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    `UPDATE voice_jobs SET status = 'queued', updated_at = ? WHERE id = ?`,
+    `UPDATE voice_jobs SET status = 'queued', error = COALESCE(?, error), updated_at = ? WHERE id = ?`,
+    error ?? null,
     new Date().toISOString(),
     id,
   );

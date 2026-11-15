@@ -109,7 +109,11 @@ async function runJob(job: VoiceJob): Promise<void> {
   emit();
 
   try {
-    const parsed = await interpretVoice(job.audioUri, job.audioMime, job.id);
+    const parsed = await interpretVoice(job.audioUri, job.audioMime, job.id, {
+      queuedAt: job.createdAt,
+      attempt: job.attempts + 1,
+      previousError: job.error,
+    });
     await markVoiceJobDone(job.id, {
       pendingIds: parsed.pendingIds,
       transcript: parsed.transcript,
@@ -141,7 +145,7 @@ async function runJob(job: VoiceJob): Promise<void> {
     if (attempts >= MAX_ATTEMPTS) {
       await markVoiceJobFailed(job.id, message);
     } else {
-      await requeueVoiceJob(job.id);
+      await requeueVoiceJob(job.id, message);
     }
     emit();
   }

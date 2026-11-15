@@ -308,6 +308,16 @@ still include lending done through a private account.
   part of day with no hour gets its usual time (AM — reverses D1's "invent no
   hour"). Review screen always offers "Paid by". Tests:
   `src/ai/interpretation/v14.test.ts`, corpus EV-29…EV-33.
+- **Voice speed — Phase 0, measurement (2026-11-15):** every capture's
+  diagnostics now record where the time went (`src/ai/timing.ts`): per-stage
+  durations (prepare, interpret, critic, repair, resolve, save), Gemini's own
+  token counts from `usageMetadata` (via an optional `meter` on `callGemini`),
+  queue wait, attempt number and the previous attempt's error. Shown as
+  **Timing** in the Why? sheet and in the shared report. Measurement only —
+  no request, reading or save changed. Phase 1 (actual speed-ups) is decided
+  from these numbers; the multi-agent split was considered and set aside (it
+  adds a sequential round trip, multiplies calls against the free-tier rate
+  limit, and breaks whole-utterance backstops).
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -315,6 +325,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 609 tests, plus 30 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 622 tests, plus 30 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.
