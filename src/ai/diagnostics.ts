@@ -23,8 +23,12 @@ export const DIAGNOSTICS_VERSION = 1;
 export const MAX_RESPONSE_CHARS = 30_000;
 
 export type CriticOutcome =
-  /** Short single-sum note — the critic was not consulted (the common case). */
+  /** Short note whose every spoken figure already has its own entry — the
+   *  critic was not consulted (the common case). */
   | 'not_needed'
+  /** Nothing to cross-check: no figure was spoken at all (V1.4, TC-041…043 —
+   *  "settled all they owe me" was reported as "one sum of money"). */
+  | 'no_figures'
   /** Consulted; it found every sum accounted for. */
   | 'no_findings'
   /** It found a problem and the re-read was used. */
@@ -105,7 +109,10 @@ export function buildDiagnostics(input: DiagnosticsInput): VoiceDiagnostics {
       name: op.name,
       kind: op.kind,
       amountMinor: op.amountMinor,
-      blockers: blockers.map((b) => b.message),
+      // A conflict is something to confirm, not an error (V1.4, TC-043).
+      blockers: blockers.map((b) =>
+        b.code === 'unresolved_conflict' ? b.message.replace(/^Unresolved conflict:\s*/i, 'Please confirm: ') : b.message,
+      ),
     })),
   };
 }
@@ -136,7 +143,8 @@ export function parseDiagnostics(raw: string | null): VoiceDiagnostics | null {
 }
 
 const CRITIC_WORDS: Record<CriticOutcome, string> = {
-  not_needed: 'Not needed — a short note with one sum of money.',
+  not_needed: 'Not needed — a short note, and every figure you said already has its own entry.',
+  no_figures: 'Not needed — no figures were spoken, so there was no money to cross-check.',
   no_findings: 'Checked the reading; every sum of money was accounted for.',
   applied: 'Found money missing or counted twice, and the sentence was re-read. The re-read is what you see.',
   kept_original: 'Found a possible problem, but the re-read was no better, so the first reading was kept.',

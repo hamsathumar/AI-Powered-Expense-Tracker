@@ -43,7 +43,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.5-flash-lite';
 const ONLY = (process.env.EVAL_ONLY ?? '')
   .split(',')
-  .map((id) => id.trim())
+  .map((id: string) => id.trim())
   .filter(Boolean);
 
 /** Gap between requests; the free tier allows roughly 10 per minute. */

@@ -67,12 +67,12 @@ generic skill recommendations:
   motion, anti-patterns. Overrides any generic design skill.
 
 For the voice/AI layer specifically, `Test/` holds the AI blueprint. Read
-`TRANSACTION_AI_AMENDMENTS.md` **first** — newest part (V1.3) first, then
-V1.2 and V1.1. It records every change made after real-world testing
+`TRANSACTION_AI_AMENDMENTS.md` **first** — newest part (V1.4) first, then
+V1.3, V1.2 and V1.1. It records every change made after real-world testing
 (`AI_TEST_CASE_LOG.md`, all rounds) and the 2026-08-25 pipeline audit
 (`AI_PIPELINE_AUDIT_2026-08-25.md`), and points into the V1 constitution /
 architecture / technical-contract documents. Section numbers (§) restart in
-each part — cite "V1.1 §10" or the amendment letter (A…AH, unique).
+each part — cite "V1.1 §10" or the amendment letter (A…AO, unique).
 `Test/archive/` holds historical documents (`CURRENT_AI_ARCHITECTURE_AUDIT.md`,
 `AI_TEST_ANALYSIS.md`) — evidence lineage only, do not act on them. How to
 record a new test case: `Test/AI_TESTING_GUIDE.md`.
@@ -295,6 +295,19 @@ still include lending done through a private account.
   `ResolvedOperation.voiceJobId`, `VoiceDiagnosticsSheet` behind **Why?** on
   the Logged screen and the review screen, Share = plain-text report. When a
   voice reading is wrong, ASK FOR THE SHARED REPORT before guessing.
+- **Transaction AI V1.4 ✅ (2026-11-15, device check pending):** fourth test
+  round (TC-041…TC-046) — read `Test/TRANSACTION_AI_AMENDMENTS.md` (V1.4)
+  first. All resolution now goes through ONE function,
+  `resolve.ts` → `resolveInterpretation` (used by `interpretVoice` AND the eval
+  scorer — add backstops there, not in either caller). New backstops: a
+  lending person recovered from its own name (AI); a merged whole-balance
+  repayment by several people split one per person (AJ); "…and X paid it" →
+  `paidBy` (AN), with the account named "Cash" hosting the net-zero pair when
+  unique and not private. Spoken punctuation in labels/notes + the label keeps
+  the model's spelling of the same words (`interpretation/labels.ts`, AL). A
+  part of day with no hour gets its usual time (AM — reverses D1's "invent no
+  hour"). Review screen always offers "Paid by". Tests:
+  `src/ai/interpretation/v14.test.ts`, corpus EV-29…EV-33.
 - **Private accounts (2026-10-06):** see the golden-rule note above. Toggle in
   the account form (confirmed when the account has history); lock + "Private"
   label on account cards, rows, detail, PDF; CSV gains a `Private` column;
@@ -302,6 +315,6 @@ still include lending done through a private account.
   private templates.
 
 **MVP build (stages 1–9) complete.** Money math + validation covered by jest
-(`npm test` — 575 tests, plus 16 skipped live-eval tests). Gemini model name is user-editable in Settings —
+(`npm test` — 609 tests, plus 30 skipped live-eval tests). Gemini model name is user-editable in Settings —
 change it if Google deprecates the default. To re-sign weekly:
 `npx expo run:ios --device`.

@@ -17,6 +17,7 @@
  */
 import { resolveDateExpression } from './dates';
 import { detectInjection, isSuspiciousEntityReference, sanitiseName } from './injection';
+import { applySpokenPunctuation, preferModelSpelling } from './labels';
 import { resolveName, type NameContext } from './naming';
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -375,7 +376,8 @@ function accountSource(src: Record<string, unknown>, operation: OrdinaryKind | '
 /** A dictated note: free text, so it gets the same injection check as a name
  *  (instruction-like text is never content) and a sane length cap. */
 function toNote(raw: unknown): string | null {
-  const text = asString(raw)?.replace(/\s+/g, ' ').trim() ?? '';
+  // V1.4 (TC-044): "colon", "hyphen"… dictated in a note are punctuation.
+  const text = applySpokenPunctuation(asString(raw)?.replace(/\s+/g, ' ').trim() ?? '');
   if (!text) return null;
   const safe = sanitiseName(text);
   return safe ? safe.slice(0, 200) : null;
@@ -399,7 +401,10 @@ function toPayer(raw: unknown, operation: OrdinaryKind, dropped: string[]): Enti
  * result is rendered in Title Case. Naming never affects financial data.
  */
 function nameFor(raw: unknown, ctx: NameContext): string {
-  return resolveName(asString(raw), ctx, sanitiseName);
+  // V1.4 (TC-044): only the unambiguous punctuation words ("hyphen", not
+  // "dash") — a model-written name is not text the user dictated.
+  const suggested = asString(raw);
+  return resolveName(suggested ? applySpokenPunctuation(suggested, 'strict') : suggested, ctx, sanitiseName);
 }
 
 /** Conflict attached when instruction-like text was stripped from an operation. */
@@ -918,7 +923,7 @@ export function validateInterpretation(
     }
     const safe = sanitiseName(label);
     if (total > 1 && holders.length === 1 && safe && !otherTypeNamed(label, holders[0]!.operation)) {
-      holders[0]!.name = resolveName(safe, { operation: holders[0]!.operation }, sanitiseName);
+      holders[0]!.name = resolveName(dictatedLabel(safe, holders[0]!.name), { operation: holders[0]!.operation }, sanitiseName);
     }
   }
   if (label && total === 1) {
@@ -952,7 +957,7 @@ export function validateInterpretation(
     } else if (!normOrdinary(label)) {
       const safe = sanitiseName(label);
       if (safe) {
-        target.name = resolveName(safe, { operation: op }, sanitiseName);
+        target.name = resolveName(dictatedLabel(safe, target.name), { operation: op }, sanitiseName);
         issues.push('name taken from the label the user asked for');
       }
     }
@@ -1021,10 +1026,20 @@ const NOTE_INSTRUCTION =
 
 export function userNote(transcript: string): { text: string; span: string } | null {
   const m = transcript.match(NOTE_INSTRUCTION);
-  const text = m?.[1]?.trim() ?? '';
+  const text = applySpokenPunctuation(m?.[1]?.trim() ?? '');
   if (!m || !text) return null;
   const safe = sanitiseName(text);
   return safe ? { text: safe, span: m[0] } : null;
+}
+
+/**
+ * The label the user dictated, as they meant it (V1.4, TC-044): spoken
+ * punctuation becomes symbols, and where the model's name is the same words
+ * spelled better ("molevi" → "Mowlavi") its spelling is kept. The user's
+ * words, order and punctuation always win over a DIFFERENT model name.
+ */
+function dictatedLabel(label: string, modelName: string): string {
+  return preferModelSpelling(applySpokenPunctuation(label), modelName);
 }
 
 /** Two textual references agree when they are equal, or either is absent. */

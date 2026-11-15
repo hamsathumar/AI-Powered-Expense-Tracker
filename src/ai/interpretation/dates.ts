@@ -12,6 +12,11 @@
  * expressions that carry an actual hour. A bare hour with no am/pm and no part
  * of day ("yesterday at 10") resolves the day but sets `timeNeedsConfirm`, so
  * the caller asks rather than guessing morning or evening.
+ *
+ * V1.4 (TC-045, owner decision 2026-11-15): a part of day WITHOUT an hour
+ * ("yesterday night", "this morning") now gets that part's usual time
+ * (morning 08:00 · noon 12:00 · afternoon 14:00 · evening 19:00 · night 21:00
+ * · midnight 23:59), never later than the moment the user spoke.
  */
 import { addDays, addMonths, addWeeks, addYears } from 'date-fns';
 
@@ -67,8 +72,59 @@ function atReferenceTime(reference: Date, y: number, monthIndex: number, day: nu
 
 export function resolveDateExpression(expression: string | null, reference: Date): DateResolution {
   const dayOnly = resolveDayExpression(expression, reference);
-  if (dayOnly.resolved || !expression) return dayOnly;
+  if (!expression) return dayOnly;
+  if (dayOnly.resolved) {
+    // "last night", "this morning", "tonight" are whole day expressions; give
+    // them their part of day's usual hour (V1.4, TC-045).
+    const part = partWordIn(expression.toLowerCase());
+    return part ? { ...dayOnly, iso: withPartOfDay(new Date(dayOnly.iso), part, reference).toISOString() } : dayOnly;
+  }
   return resolveWithTime(expression, reference) ?? dayOnly;
+}
+
+// ── Part of day without an hour (V1.4, TC-045) ───────────────────────────
+/**
+ * Owner decision (2026-11-15), reversing the "invent no hour" half of D1: a
+ * part of day said WITHOUT an hour gets that part's usual time, so "yesterday
+ * night" is not stored at the moment it was spoken (09:56). A stated hour
+ * still wins, and a bare hour still asks morning-or-evening.
+ *
+ * Midnight is 23:59 of the day named, so "yesterday at midnight" stays on
+ * yesterday — the day the user meant — instead of rolling into the next one.
+ */
+type PartWord = 'morning' | 'noon' | 'afternoon' | 'evening' | 'night' | 'midnight';
+
+const PART_DEFAULT_TIME: Record<PartWord, [number, number]> = {
+  morning: [8, 0],
+  noon: [12, 0],
+  afternoon: [14, 0],
+  evening: [19, 0],
+  night: [21, 0],
+  midnight: [23, 59],
+};
+
+function partWordIn(text: string): PartWord | null {
+  if (/\bmidnight\b/.test(text)) return 'midnight';
+  if (/\b(?:noon|midday)\b/.test(text)) return 'noon';
+  if (/\b(?:tonight|night)\b/.test(text)) return 'night';
+  const m = text.match(/\b(morning|afternoon|evening)\b/);
+  return m ? (m[1] as PartWord) : null;
+}
+
+const sameCalendarDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+/**
+ * `day` at the usual time for `part`. When that would be LATER today than the
+ * moment the user spoke ("this evening", said at 10 am), the spoken moment is
+ * kept: a transaction is never stamped in the future by a default.
+ */
+function withPartOfDay(day: Date, part: PartWord, reference: Date): Date {
+  const [hour, minute] = PART_DEFAULT_TIME[part];
+  const d = new Date(day);
+  d.setHours(hour, minute, 0, 0);
+  if (sameCalendarDay(d, reference) && d > reference) return new Date(day);
+  return d;
 }
 
 // ── Clock time (V1.3, TC-033) ────────────────────────────────────────────
@@ -84,10 +140,11 @@ const TIME =
   /(?:\b(at|around|about|by|approx(?:imately)?|roughly)\s+)?\b(\d{1,2})(?:[:.](\d{2}))?(?:\s*(a\.?m\.?|p\.?m\.?|o'?\s?clock))?(?:\s+(?:in\s+the\s+|at\s+)?(morning|afternoon|evening|night))?(?![\w:])/i;
 
 /** A part of day with no hour ("yesterday evening", "yesterday at night"). */
-const PART_ONLY = /\b(?:in\s+the\s+|at\s+|this\s+)?(morning|afternoon|evening|night)\b/i;
+const PART_ONLY = /\b(?:in\s+the\s+|at\s+|this\s+|around\s+)?(morning|afternoon|evening|night|tonight|noon|midday|midnight)\b/i;
 
 function partOfDayIn(text: string): PartOfDay | null {
   if (/\btonight\b|\bnight\b/.test(text)) return 'night';
+  if (/\b(?:noon|midday)\b/.test(text)) return 'afternoon'; // "at 12 noon" → 12:00
   const m = text.match(/\b(morning|afternoon|evening)\b/);
   return m ? (m[1] as PartOfDay) : null;
 }
@@ -127,6 +184,7 @@ function resolveWithTime(expression: string, reference: Date): DateResolution | 
   let hour: number | null = null;
   let minute = 0;
   let timeNeedsConfirm = false;
+  let part: PartWord | null = null;
 
   if (m && hasCue) {
     dayText = (e.slice(0, m.index) + ' ' + e.slice(m.index! + m[0].length)).trim();
@@ -143,10 +201,11 @@ function resolveWithTime(expression: string, reference: Date): DateResolution | 
       hour = h24;
     }
   } else {
-    // No clock time; perhaps "yesterday evening". The day is honoured, the
-    // hour is not invented (the reference time of day is kept).
+    // No clock time; perhaps "yesterday evening". The day is honoured and
+    // the part of day's usual time is used (V1.4, TC-045).
     const p = e.match(PART_ONLY);
     if (!p) return null;
+    part = partWordIn(p[1]!.toLowerCase());
     dayText = (e.slice(0, p.index) + ' ' + e.slice(p.index! + p[0].length)).trim();
   }
 
@@ -166,6 +225,7 @@ function resolveWithTime(expression: string, reference: Date): DateResolution | 
     base = new Date(day.iso);
   }
 
+  if (hour === null && part) base = withPartOfDay(base, part, reference);
   if (hour !== null) {
     base.setHours(hour, minute, 0, 0);
     // "at 10 pm" said in the morning with no day: the most recent 10 pm
@@ -196,10 +256,9 @@ function resolveDayExpression(expression: string | null, reference: Date): DateR
   if (e === 'day after tomorrow' || e === 'the day after tomorrow')
     return { iso: shiftDays(reference, 2).toISOString(), resolved: true };
 
-  // Time-of-day words that still mean the reference DAY. Kaasu stores a
-  // timestamp but has no clock-time capture (Architecture §26 open question),
-  // so these resolve to the day, not to an invented hour — except the ones
-  // that plainly mean yesterday.
+  // Time-of-day words that name a DAY: today, or (for the ones that plainly
+  // mean it) yesterday. The part of day's usual hour is applied on top by
+  // resolveDateExpression (V1.4, TC-045).
   if (/^(this\s+)?(morning|afternoon|evening)$/.test(e) || e === 'tonight' || e === 'just now')
     return { iso: nowIso, resolved: true };
   if (e === 'last night' || e === 'yesterday night' || e === 'last evening')

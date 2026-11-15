@@ -6,7 +6,9 @@
  * conflict. The Approve button is driven by the SAME deterministic gate used at
  * commit (`evaluateApproval`); it is disabled until the operation is safe. On
  * approve, the (edited) operation is persisted and committed through the final
- * gate. Nothing is defaulted here — the user chooses every value.
+ * gate. Nothing is defaulted here — the user chooses every value. (One
+ * exception, V1.4: choosing who paid fills an EMPTY account with the one
+ * named "Cash", because the borrow + expense pair nets to zero on it.)
  */
 import { Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
@@ -24,6 +26,7 @@ import { getVoiceJob } from '@/db/queries/voiceJobs';
 import { commitPendingOperation, rejectPendingOperation } from '@/ai/commitOperation';
 import { resolveDateExpression } from '@/ai/interpretation/dates';
 import { evaluateApproval } from '@/ai/interpretation/gate';
+import { pairHostAccount } from '@/ai/interpretation/resolve';
 import type { LendingDirection, ResolvedOperation, ResolvedRef } from '@/ai/interpretation/types';
 import { listAccounts } from '@/db/queries/accounts';
 import { listCategories } from '@/db/queries/categories';
@@ -383,23 +386,41 @@ export default function ReviewOperationScreen() {
               </>
             ) : null}
 
-            {op.kind === 'expense' && op.paidBy ? (
+            {op.kind === 'expense' ? (
               // V1.3 (TC-039): someone else paid — approving records a borrow
-              // from them plus this expense. "Nobody" removes it (you paid).
+              // from them plus this expense. "I paid" removes it.
+              // V1.4 (TC-046): always offered, so a payer the model missed can
+              // be added here; picking one with no account yet uses the
+              // account named "Cash" to host the net-zero pair.
               <>
                 <Group colors={colors} title="Paid by">
+                  <Chip colors={colors} label="I paid" active={!op.paidBy} onPress={() => patch({ paidBy: null })} />
                   {people.map((p) => (
                     <Chip
                       colors={colors}
                       key={p.id}
                       label={p.name}
                       active={op.paidBy?.id === p.id}
-                      onPress={() => patch({ paidBy: resolvedRef(p.id, p.name) })}
+                      onPress={() => {
+                        const host =
+                          op.account?.status === 'resolved'
+                            ? null
+                            : pairHostAccount(accounts.map((a) => ({ id: a.id, name: a.name, isPrivate: a.isPrivate })));
+                        patch({
+                          paidBy: resolvedRef(p.id, p.name),
+                          ...(host ? { account: resolvedRef(host.id, host.name) } : {}),
+                        });
+                      }}
                     />
                   ))}
-                  <Chip colors={colors} label="I paid" active={false} onPress={() => patch({ paidBy: null })} />
                 </Group>
                 <Suggestion refValue={op.paidBy} colors={colors} />
+                {op.paidBy ? (
+                  <Text style={[type.caption, { color: colors.textSubtle }]}>
+                    Saved as a borrow from {op.paidBy.options[0]?.name ?? op.paidBy.reference ?? 'them'} plus this
+                    expense. Both sit on the account above, so it nets to zero — no money left it.
+                  </Text>
+                ) : null}
               </>
             ) : null}
 

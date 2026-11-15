@@ -405,10 +405,11 @@ describe('A6 — date + clock time', () => {
     expect(v.candidates[0]!.conflicts.some((c) => c.kind === 'date_unresolved' && /morning or evening/.test(c.note))).toBe(true);
   });
 
-  it('a part of day without an hour keeps the day and invents no hour', () => {
+  it('a part of day without an hour keeps the day and uses that part\'s usual time (V1.4, TC-045)', () => {
+    // Was "invents no hour" (D1); reversed by the owner on 2026-11-15.
     const r = resolveDateExpression('yesterday evening', now);
     expect(r.resolved).toBe(true);
-    expect(at(r.iso)).toEqual([28, 9, 50]);
+    expect(at(r.iso)).toEqual([28, 19, 0]);
   });
 
   it('never reads a date number as a time', () => {

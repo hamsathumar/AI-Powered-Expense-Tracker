@@ -16,19 +16,14 @@ import {
   buildCorrectionNote,
   chooseInterpretation,
   critiqueHasFindings,
+  countMoneyMentions,
   critiqueInterpretation,
   shouldCritique,
 } from '@/ai/critic';
 import { fileToBase64, interpretAudioWithGemini, interpretTextWithGemini } from '@/ai/geminiInterpret';
 import type { InterpretPromptContext } from '@/ai/interpretPrompt';
 import { validateInterpretation } from '@/ai/interpretation/validate';
-import {
-  inheritFundingAccount,
-  resolveCandidate,
-  resolveSpecialized,
-  resolveUnqualified,
-  type ResolveContext,
-} from '@/ai/interpretation/resolve';
+import { resolveInterpretation, type ResolveContext } from '@/ai/interpretation/resolve';
 import type {
   ResolvedOperation,
   UnqualifiedIntent,
@@ -83,7 +78,7 @@ async function loadContext(): Promise<{ resolve: ResolveContext; prompt: Interpr
   const lite = <T extends { id: string; name: string }>(xs: T[]) => xs.map((x) => ({ id: x.id, name: x.name }));
   return {
     resolve: {
-      accounts: accounts.map((a) => ({ id: a.id, name: a.name, kind: a.type })),
+      accounts: accounts.map((a) => ({ id: a.id, name: a.name, kind: a.type, isPrivate: a.isPrivate })),
       expenseCategories: lite(expenseCategories),
       incomeCategories: lite(incomeCategories),
       people: lite(people),
@@ -134,7 +129,8 @@ async function auditCompoundUtterance(input: AuditInput): Promise<AuditResult> {
   const { validated, now } = input;
   const transcript = validated.transcript;
   if (!shouldCritique(transcript, validated)) {
-    return { validated, critic: 'not_needed', missing: [], duplicated: [] };
+    const critic: CriticOutcome = countMoneyMentions(transcript) === 0 ? 'no_figures' : 'not_needed';
+    return { validated, critic, missing: [], duplicated: [] };
   }
 
   const critique = await critiqueInterpretation({
@@ -226,30 +222,9 @@ export async function interpretVoice(
   // Resolve every operation against the CURRENT entities (app-owned).
   // Unqualified intents are queued too (audit F3): they arrive with a null
   // amount and cannot pass the gate, but the user can complete them instead of
-  // losing what they said.
-  // What the user said, so the resolver can recover an account the model left
-  // out — scoped to each operation's own clause (V1.3, TC-035).
-  const opCount =
-    validated.candidates.length + validated.specializedOperations.length + validated.unqualifiedIntents.length;
-  const scope = { transcript: validated.transcript, soleOperation: opCount === 1 };
-  const ops: ResolvedOperation[] = [
-    ...validated.candidates.map((c) => ({
-      ...resolveCandidate(c, ctx.resolve, scope),
-      transcript: validated.transcript,
-    })),
-    ...validated.specializedOperations.map((s) => ({
-      ...resolveSpecialized(s, ctx.resolve),
-      transcript: validated.transcript,
-    })),
-    ...validated.unqualifiedIntents.map((u) => ({
-      ...resolveUnqualified(u, ctx.resolve, scope),
-      transcript: validated.transcript,
-    })),
-  ];
-
-  // "…and spent 70 on lunch from it" — the spend takes the account of the
-  // money that came in earlier in the same sentence (V1.3, device round).
-  const finalOps = inheritFundingAccount(ops, validated.transcript);
+  // losing what they said. One shared path with the eval harness (V1.4).
+  const resolved = resolveInterpretation(validated, ctx.resolve);
+  const finalOps: ResolvedOperation[] = resolved.operations;
   // Phase C: tag each operation with the capture that produced it, so the
   // review screen can open this capture's diagnostics.
   const tagged = voiceJobId ? finalOps.map((o) => ({ ...o, voiceJobId })) : finalOps;
@@ -261,7 +236,7 @@ export async function interpretVoice(
     critic: audit.critic,
     criticMissing: audit.missing,
     criticDuplicated: audit.duplicated,
-    validationIssues: validated.issues,
+    validationIssues: [...validated.issues, ...resolved.issues],
     rawResponse: raw,
     repairedResponse: audit.repairRaw,
     operations: tagged.map((op) => ({ op, blockers: evaluateApproval(op).blockers })),

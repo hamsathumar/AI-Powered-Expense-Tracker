@@ -1,4 +1,4 @@
-# Kaasu — Transaction AI Amendments (V1.1 → V1.3)
+# Kaasu — Transaction AI Amendments (V1.1 → V1.4)
 
 Every amendment made to the Transaction AI V1 blueprint (`TRANSACTION_AI_CONSTITUTION_V1.md`, `TRANSACTION_AI_ARCHITECTURE_V1.md`, `TRANSACTION_AI_TECHNICAL_CONTRACT_V1.md`), in the order they were made. Each version is kept exactly as written, so its section numbers (§) count within its own part — cite as "V1.1 §10" or by amendment letter, which is unique across all three.
 
@@ -7,6 +7,7 @@ Every amendment made to the Transaction AI V1 blueprint (`TRANSACTION_AI_CONSTIT
 | [V1.1](#part-v11) | 2026-08-21 | Test round 2 — TC-021 … TC-027 | A – G |
 | [V1.2](#part-v12) | 2026-08-25 | Pipeline audit (F1–F11), Phases 1–3 | H – U |
 | [V1.3](#part-v13) | 2026-10-07 | Test round 3 — TC-028 … TC-040, Phases A–C | V – AH |
+| [V1.4](#part-v14) | 2026-11-15 | Test round 4 — TC-041 … TC-046 | AI – AO |
 
 Test evidence for every round: `AI_TEST_CASE_LOG.md`. The audit behind V1.2: `AI_PIPELINE_AUDIT_2026-08-25.md`.
 
@@ -1442,3 +1443,190 @@ Reload is enough (migration 9 runs on launch; no native change).
 2. Open any new voice item from the queue → **Why was it read like this?**
    opens the same panel. Items logged before this update have no link.
 3. Tap **Share** → the iOS share sheet offers the plain-text report.
+
+---
+
+# Part V1.4
+
+# Kaasu — Transaction AI V1.4 Amendments
+
+**Phase:** Post-implementation correction, driven by evidence.
+**Date:** 2026-11-15
+**Status:** Implemented and unit-tested (`npm test` — 609 passing, 30 live-eval
+skipped without a key; new suite `src/ai/interpretation/v14.test.ts`, eval
+corpus EV-29 … EV-33). Live eval and device verification pending.
+**Supersedes nothing.** V1, V1.1, V1.2 and V1.3 stand, except where AM
+reverses one half of decision D1 (stated below).
+
+**Evidence:** `Test/AI_TEST_CASE_LOG.md` (TC-041 … TC-046).
+**Owner decisions (2026-11-15):** E1 a part of day with no hour gets its
+usual time (reverses D1's "invent no hour") · E2 a paid-by-someone-else pair
+is hosted on the account named "Cash" when unique and not private · E3 a
+merged whole-balance repayment by several people is split, one per person,
+each still confirmed.
+
+---
+
+## 0. What the fourth round showed
+
+Every safety boundary held: nothing was saved wrongly, and every bad reading
+was blocked for the user to complete. The failures were:
+
+| Kind | Cases | Layer |
+|---|---|---|
+| A fact the model knew, put in the wrong place (name/evidence, not the field) | TC-041, TC-042, TC-046 | model → resolution backstop |
+| The app's own override undoing a good reading | TC-044 | validation |
+| A capability the app did not have (part-of-day time; no way to add a payer) | TC-045, TC-046 | application / UI |
+| Misleading wording | TC-041 … TC-044 (critic), TC-043 (conflict label) | presentation |
+
+As in V1.3, each model-side failure gets a prompt rule AND a deterministic
+backstop proven by replaying the device reading ("-bad" eval cases).
+
+## 1. Amendment AI — The person the user named *(TC-041)*
+
+**Observed.** "…and Nuski and Mayees Mowlavi settled all the amounts that they
+owe me" gave two correct repayment cards named "Settlement from Nuski" /
+"Settlement from Mayees Mowlavi", but with `person` empty — so "Person needed",
+and the V1.3 whole-balance fill (AC) never ran.
+
+**Amendment.** `resolve.ts` → `recoverPerson`: a LENDING operation with no
+person reference takes a SAVED person named, by whole name, in its own name
+(or, failing that, in its evidence when that names exactly one). It resolves
+only when the user actually said that name; a name found only in the model's
+text is offered as a suggestion (`ambiguous`, blocks). A reference the model
+gave is never overridden. The whole-balance check (AC) also reads the
+transcript sentences naming the person, so the figure is filled — with the
+usual blocking confirmation.
+
+## 2. Amendment AJ — Several people settling in one sentence *(TC-042, decision E3)*
+
+**Observed.** "Nuski and Mayees Mowlavi settled all the amounts that they owe
+me in cash" became ONE amountless **income** with no person (TC-043 — the same
+thing said as two sentences — worked).
+
+**Amendment.** `resolve.ts` → `expandGroupRepayment`: an amountless income /
+lending / unknown intent with no person of its own, whose sentence has
+whole-balance wording (AC's closed list) and a repayment verb, and a stated
+direction ("owe me" → received; "I owe / I paid back" → made), becomes one
+lending repayment PER name in the sentence's name run — at least one name must
+be an exact saved person. Each is then resolved and filled from that person's
+approved balance (AC). A mis-heard name stays as its own "Pick the person"
+card — never dropped. Instruction-like text is never a name. Only amountless
+intents are touched, so a spoken sum can never be counted twice (TC-021); a
+lending intent whose own name already says who (AI) is left to AI. Duplicate
+repayment cards for the same person and direction collapse to one.
+
+## 3. Amendment AK — Wording *(TC-041 … TC-044)*
+
+- The diagnostics panel shows a confirmation as **"Please confirm: …"**
+  instead of "Unresolved conflict: …" (TC-043). The gate is unchanged.
+- The critic line no longer claims "one sum of money": a new outcome
+  `no_figures` reads "no figures were spoken, so there was no money to
+  cross-check"; `not_needed` now reads "every figure you said already has its
+  own entry". Behaviour is unchanged.
+- (TC-041's "null date expression with kind relative" was the RAW model JSON;
+  validation already normalises it to `none`.)
+
+## 4. Amendment AL — Spoken punctuation, and the label keeps good spelling *(TC-044)*
+
+**Root cause (diagnostics).** Speech-to-text wrote "hyphen" as a word; the
+model dropped it and corrected "molevi" → "Mowlavi"; then the V1.3 label
+override (§8a.1) replaced the model's name with the RAW label — "Rent Hyphen
+Nizam Molevi".
+
+**Amendment.** `interpretation/labels.ts` (pure):
+- `applySpokenPunctuation` — hyphen/dash → `-`, colon → `:`, semicolon → `;`,
+  slash → `/`, open/close bracket → `( )`, ampersand/"and sign" → `&`. Applied
+  to the dictated label and notes (full set) and to model names in `strict`
+  mode (only words never found in a real name — "Dash Cam" survives).
+- `preferModelSpelling` — when the model's name is the SAME words in the same
+  order (same first letter, small edit distance), its spelling is kept inside
+  the user's label: "Rent - Nizam Mowlavi". A different model name still loses
+  to the label (TC-036 "fruits" holds).
+
+Not changed: the person TAG on an income ("Nisam" vs "Nizam") is never
+persisted — expense/income rows have no person column.
+
+## 5. Amendment AM — A part of day gets its usual time *(TC-045, decision E1)*
+
+Reverses the "invent no hour" half of D1 (AA). A part of day WITHOUT an hour:
+
+| Said | Time |
+|---|---|
+| morning | 08:00 |
+| noon / midday | 12:00 |
+| afternoon | 14:00 |
+| evening | 19:00 |
+| night / tonight / last night | 21:00 |
+| midnight | 23:59 of the day named (stays on that day) |
+
+A default that would be LATER today than when the user spoke ("this evening"
+said at 10 am) keeps the spoken time — never a future timestamp. A stated hour
+still wins; a bare hour still asks morning-or-evening (D1 unchanged there).
+*Code:* `dates.ts` → `withPartOfDay`.
+
+## 6. Amendment AN — Paid by someone else, without the friction *(TC-046, decision E2)*
+
+**Observed.** "Spent 160 on snacks yesterday night and Nuski paid it" → a plain
+expense that demanded one of the user's accounts. The voice review screen only
+showed "Paid by" when the model had set it, so a missed payer could not be
+added at all.
+
+**Amendment.**
+- **Backstop** (`resolve.ts` → `payerFromWords`): an expense with no `paidBy`
+  whose sentence says a SAVED person paid it — "X paid (it / for it / the
+  bill / for me)", "paid by X" — takes that person. The name must come before
+  "paid" ("I paid Nuski" never counts), nothing but the thing paid for may
+  follow ("Nuski paid me back" / "paid it back" never count), several payers
+  ("Sham and Nuski paid it") never count, and it is skipped when the model
+  already recorded a borrow from that person for the same amount, or when the
+  utterance has a bill split.
+- **Host account** (`pairHostAccount`): the borrow + expense pair (D4) nets to
+  zero on its account, so an expense with a payer and NO stated account uses
+  the account named "Cash" — only when exactly one exists and it is not
+  private (a private account would hide the spending from reports). A stated
+  account always wins. Account-less records were rejected: every report query
+  joins on the account, so they would vanish from reports.
+- **Review screen:** "Paid by" is always offered on voice expenses ("I paid"
+  selected by default); choosing a person fills an EMPTY account with Cash
+  and explains that the pair nets to zero.
+
+## 7. Amendment AO — Prompt, schema, one resolve path
+
+- **Prompt:** rules "people are fields", "several people settling = one
+  repayment per person", "spoken punctuation", and "…and X paid it" added to
+  PAID BY; worked examples #13 (two people settle), #14 ("…and Nuski paid
+  it", no account guessed), #15 (spoken hyphen in a label).
+- **Schema:** `note` and `paidBy` were declared on candidates but missing from
+  `propertyOrdering` (and `note` on unqualified intents) — added; the
+  unqualified `person` describes "one intent per person".
+- **One resolve path:** `resolveInterpretation` in `resolve.ts` now does all
+  resolution (candidates, specialized, intents, the AI/AJ/AN backstops, the
+  V1.3 "from it" inheritance). `interpretVoice.ts` and the eval scorer both
+  call it, so a replay can no longer drift from the app. Its adjustments are
+  added to the diagnostics' "What the app adjusted".
+- **Eval corpus:** EV-29-bad (TC-041), EV-30-bad + EV-31 (TC-042), EV-32-bad +
+  EV-33 (TC-046); EV-26 now expects the Cash host (approvable).
+
+## 8. Device verification (V1.4)
+
+Hot reload is enough (no native or schema change). Run the live eval first:
+`GEMINI_API_KEY=... npx jest liveEval`.
+
+1. **TC-041** — "Spent 300 on lunch using cash and Nuski and Mayees Mowlavi
+   settled all the amounts that they owe me." → Lunch ready; two repayment
+   cards WITH their person and the balance figure, each "Confirm & approve".
+2. **TC-042** — "Nuski and Mayees Mowlavi settled all the amounts that they owe
+   me in cash." → two repayment cards (not income), each on Cash with its
+   balance.
+3. **TC-043** — the "Why?" panel shows "Please confirm: …" and no "one sum of
+   money" line.
+4. **TC-044** — "Received 5000 to room account, label it as rent hyphen nizam
+   mowlavi." → named "Rent - Nizam Mowlavi".
+5. **TC-045** — "Spent 160 on snacks yesterday night" said in the morning →
+   yesterday 21:00.
+6. **TC-046** — "Spent 160 rupees on snacks yesterday night and Nuski paid it."
+   → one Snacks card, "Paid by Nuski", account Cash, approvable; after
+   approving, Nuski's profile shows you owe 160 and Reports shows a 160 Food
+   expense; Cash's balance is unchanged.
+

@@ -736,8 +736,9 @@ export const EVAL_CORPUS: EvalCase[] = [
     modelOutput: reading('Sham paid 280 rupees for dinner for me.', [
       { operation: 'expense', amount: explicit('280 rupees', 280), category: ref('Food'), paidBy: ref('Sham'), name: 'Dinner' },
     ]),
-    // Account still the user's pick (the pair nets to zero on it).
-    expect: { operations: [{ operation: 'expense', amountMinor: 28000, category: 'Food', approvable: false }] },
+    // V1.4 (TC-046, owner decision 2026-11-15): the pair nets to zero on its
+    // account, so the one account named "Cash" hosts it — no pick needed.
+    expect: { operations: [{ operation: 'expense', amountMinor: 28000, account: 'Cash', category: 'Food', approvable: true }] },
   },
   {
     id: 'EV-27',
@@ -779,5 +780,141 @@ export const EVAL_CORPUS: EvalCase[] = [
         { operation: 'expense', amountMinor: 7000, account: 'Cash', category: 'Food', approvable: true },
       ],
     },
+  },
+  // ── V1.4 — test round 4 (TC-041 … TC-046) ─────────────────────────────
+  {
+    id: 'EV-29-bad',
+    origin: 'TC-041',
+    what: 'names spoken, person left empty: each repayment gets the person named in it',
+    utterance: 'Spent 300 rupees on lunch using cash and Nuski and Mayees Mowlavi settled all the amounts that they owe me.',
+    offlineOnly: true,
+    modelOutput: reading(
+      'Spent 300 rupees on lunch using cash and Nuski and Mayees Mowlavi settled all the amounts that they owe me.',
+      [{ operation: 'expense', amount: explicit('300 rupees', 300), account: ref('Cash'), category: ref('Food'), name: 'Lunch' }],
+      [
+        {
+          operation: 'lending',
+          direction: 'lend_repayment_received',
+          amount: none,
+          paidBy: { reference: null, provenance: 'UNRESOLVED', state: 'UNKNOWN' },
+          dateExpression: { expression: null, kind: 'relative' },
+          name: 'Settlement from Nuski',
+          evidence: [{ sourceText: 'Nuski and Mayees Mowlavi settled all the amounts that they owe me', supports: 'repayment' }],
+          rejectionReason: 'NO_TRANSACTION_VALUE_DETECTED',
+        },
+        {
+          operation: 'lending',
+          direction: 'lend_repayment_received',
+          amount: none,
+          name: 'Settlement from Mayees Mowlavi',
+          evidence: [{ sourceText: 'Nuski and Mayees Mowlavi settled all the amounts that they owe me', supports: 'repayment' }],
+          rejectionReason: 'NO_TRANSACTION_VALUE_DETECTED',
+        },
+      ],
+    ),
+    expect: {
+      operations: [
+        { operation: 'expense', amountMinor: 30000, account: 'Cash', category: 'Food', approvable: true },
+        { operation: 'lending', amountMinor: null, person: 'Nuski', direction: 'lend_repayment_received', approvable: false },
+        { operation: 'lending', amountMinor: null, person: 'Mayees Mowlavi', direction: 'lend_repayment_received', approvable: false },
+      ],
+    },
+  },
+  {
+    id: 'EV-30-bad',
+    origin: 'TC-042',
+    what: 'two people settling in one sentence, merged into one income: one repayment per person',
+    utterance: 'Nuski and Mayees Mowlavi settled all the amounts that they owe me in cash.',
+    offlineOnly: true,
+    modelOutput: reading(
+      'Nuski and Mayees Mowlavi settled all the amounts that they owe me in cash.',
+      [],
+      [
+        {
+          operation: 'income',
+          amount: none,
+          account: ref('Cash'),
+          name: 'Settlement',
+          evidence: [{ sourceText: 'settled all the amounts that they owe me in cash', supports: 'income' }],
+          rejectionReason: 'NO_TRANSACTION_VALUE_DETECTED',
+        },
+      ],
+    ),
+    expect: {
+      operations: [
+        { operation: 'lending', amountMinor: null, account: 'Cash', person: 'Nuski', direction: 'lend_repayment_received', approvable: false },
+        { operation: 'lending', amountMinor: null, account: 'Cash', person: 'Mayees Mowlavi', direction: 'lend_repayment_received', approvable: false },
+      ],
+    },
+  },
+  {
+    id: 'EV-31',
+    origin: 'TC-042',
+    what: 'two people settling in one sentence: two repayments, each with its person, into Cash',
+    utterance: 'Nuski and Mayees Mowlavi settled all the amounts that they owe me in cash.',
+    modelOutput: reading(
+      'Nuski and Mayees Mowlavi settled all the amounts that they owe me in cash.',
+      [],
+      [
+        {
+          operation: 'lending',
+          direction: 'lend_repayment_received',
+          amount: { ...none, expression: 'all the amounts that they owe me' },
+          account: ref('Cash'),
+          person: ref('Nuski'),
+          name: 'Repayment from Nuski',
+          rejectionReason: 'NO_TRANSACTION_VALUE_DETECTED',
+        },
+        {
+          operation: 'lending',
+          direction: 'lend_repayment_received',
+          amount: { ...none, expression: 'all the amounts that they owe me' },
+          account: ref('Cash'),
+          person: ref('Mayees Mowlavi'),
+          name: 'Repayment from Mayees Mowlavi',
+          rejectionReason: 'NO_TRANSACTION_VALUE_DETECTED',
+        },
+      ],
+    ),
+    expect: {
+      operations: [
+        { operation: 'lending', amountMinor: null, account: 'Cash', person: 'Nuski', direction: 'lend_repayment_received', approvable: false },
+        { operation: 'lending', amountMinor: null, account: 'Cash', person: 'Mayees Mowlavi', direction: 'lend_repayment_received', approvable: false },
+      ],
+    },
+  },
+  {
+    id: 'EV-32-bad',
+    origin: 'TC-046',
+    what: '"…and Nuski paid it" read as a plain expense: the payer is taken from the words, Cash hosts the pair',
+    utterance: 'Spent 160 rupees on snacks yesterday night and Nuski paid it.',
+    offlineOnly: true,
+    modelOutput: reading('Spent 160 rupees on snacks yesterday night and Nuski paid it.', [
+      {
+        operation: 'expense',
+        amount: explicit('160 rupees', 160),
+        category: ref('Food'),
+        dateExpression: { expression: 'yesterday night', kind: 'relative' },
+        name: 'Snacks',
+      },
+    ]),
+    expect: { operations: [{ operation: 'expense', amountMinor: 16000, account: 'Cash', category: 'Food', approvable: true }] },
+  },
+  {
+    id: 'EV-33',
+    origin: 'TC-046',
+    what: '"…and Nuski paid it": ONE expense paid by Nuski (no separate lending candidate)',
+    utterance: 'Spent 160 rupees on snacks yesterday night and Nuski paid it.',
+    modelOutput: reading('Spent 160 rupees on snacks yesterday night and Nuski paid it.', [
+      {
+        operation: 'expense',
+        amount: explicit('160 rupees', 160),
+        category: ref('Food'),
+        paidBy: ref('Nuski'),
+        dateExpression: { expression: 'yesterday night', kind: 'relative' },
+        name: 'Snacks',
+      },
+    ]),
+    expect: { operations: [{ operation: 'expense', amountMinor: 16000, account: 'Cash', category: 'Food', approvable: true }] },
   },
 ];
